@@ -40,13 +40,11 @@ import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.StayCurrentLandscape
 import androidx.compose.material.icons.filled.StayCurrentPortrait
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VideoLibrary
-import androidx.compose.material.icons.filled.VideoSettings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.outlined.Info
@@ -92,8 +90,6 @@ import com.example.settings.OrientationMode
 import com.example.settings.RecordingMode
 import com.example.settings.RegionAnimationOption
 import com.example.settings.VideoBitrateOption
-import com.example.settings.VideoCodecOption
-import com.example.settings.VideoFpsOption
 import com.example.ui.RecorderUiState
 import com.example.ui.components.RegionBorderOverlayCanvas
 import com.example.ui.theme.LocalStudioColors
@@ -109,8 +105,6 @@ fun MainScreen(
   onOpenRecordings: () -> Unit,
   onSelectMode: (RecordingMode) -> Unit,
   onSelectOrientationMode: (OrientationMode) -> Unit,
-  onSelectVideoCodec: (VideoCodecOption) -> Unit,
-  onSelectVideoFps: (VideoFpsOption) -> Unit,
   onSelectAudioSource: (AudioSourceOption) -> Unit,
   onSelectBitrate: (VideoBitrateOption) -> Unit,
   onSelectRegionAnimation: (RegionAnimationOption) -> Unit,
@@ -311,16 +305,6 @@ fun MainScreen(
                 enabled = isIdle,
                 onSelectAudio = onSelectAudioSource,
               )
-              VideoCodecCard(
-                selectedCodec = uiState.settings.videoCodec,
-                enabled = isIdle,
-                onSelectCodec = onSelectVideoCodec,
-              )
-              VideoFpsCard(
-                selectedFps = uiState.settings.videoFps,
-                enabled = isIdle,
-                onSelectFps = onSelectVideoFps,
-              )
               VideoBitrateCard(
                 selectedBitrate = uiState.settings.videoBitrate,
                 enabled = isIdle,
@@ -365,22 +349,6 @@ fun MainScreen(
                 selectedAudio = uiState.settings.audioSource,
                 enabled = isIdle,
                 onSelectAudio = onSelectAudioSource,
-              )
-            }
-
-            Box(modifier = Modifier.alpha(settingsAlpha)) {
-              VideoCodecCard(
-                selectedCodec = uiState.settings.videoCodec,
-                enabled = isIdle,
-                onSelectCodec = onSelectVideoCodec,
-              )
-            }
-
-            Box(modifier = Modifier.alpha(settingsAlpha)) {
-              VideoFpsCard(
-                selectedFps = uiState.settings.videoFps,
-                enabled = isIdle,
-                onSelectFps = onSelectVideoFps,
               )
             }
 
@@ -556,13 +524,11 @@ private fun RecordingConsoleCard(
             } else {
               stringResource(R.string.audio_microphone)
             }
-          "$modeSummary • $orientationSummary • ${uiState.settings.videoCodec.label} • ${uiState.settings.videoFps.label} • $audioSummary"
+          "$modeSummary • $orientationSummary • $audioSummary"
         } else {
           listOfNotNull(
               uiState.session.activeResolutionLabel.takeIf { it.isNotBlank() },
               orientationSummary,
-              uiState.session.activeCodecLabel.takeIf { it.isNotBlank() },
-              "${uiState.session.activeFps} FPS",
               uiState.session.activeAudioLabel.takeIf { it.isNotBlank() },
             )
             .joinToString(" • ")
@@ -880,79 +846,6 @@ private fun AudioSourceCard(
         onClick = { onSelectAudio(AudioSourceOption.MICROPHONE) },
         modifier = Modifier.weight(1f),
       )
-    }
-  }
-}
-
-@Composable
-private fun VideoCodecCard(
-  selectedCodec: VideoCodecOption,
-  enabled: Boolean,
-  onSelectCodec: (VideoCodecOption) -> Unit,
-) {
-  SettingsSectionCard(
-    title = stringResource(R.string.section_video_codec),
-    icon = Icons.Default.VideoSettings,
-  ) {
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-      OptionTile(
-        title = stringResource(R.string.codec_h265),
-        subtitle = stringResource(R.string.codec_h265_desc),
-        icon = Icons.Default.VideoSettings,
-        selected = selectedCodec == VideoCodecOption.H265,
-        enabled = enabled,
-        testTag = "codec_h265",
-        onClick = { onSelectCodec(VideoCodecOption.H265) },
-        modifier = Modifier.weight(1f),
-      )
-      OptionTile(
-        title = stringResource(R.string.codec_h264),
-        subtitle = stringResource(R.string.codec_h264_desc),
-        icon = Icons.Default.VideoSettings,
-        selected = selectedCodec == VideoCodecOption.H264,
-        enabled = enabled,
-        testTag = "codec_h264",
-        onClick = { onSelectCodec(VideoCodecOption.H264) },
-        modifier = Modifier.weight(1f),
-      )
-    }
-  }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun VideoFpsCard(
-  selectedFps: VideoFpsOption,
-  enabled: Boolean,
-  onSelectFps: (VideoFpsOption) -> Unit,
-) {
-  SettingsSectionCard(
-    title = stringResource(R.string.section_video_fps),
-    icon = Icons.Default.Speed,
-  ) {
-    FlowRow(
-      modifier = Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
-      verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      VideoFpsOption.entries.forEach { option ->
-        val isSelected = option == selectedFps
-        FilterChip(
-          selected = isSelected,
-          onClick = { onSelectFps(option) },
-          enabled = enabled,
-          label = { Text(option.label) },
-          modifier = Modifier.testTag("fps_${option.fps}"),
-          colors =
-            FilterChipDefaults.filterChipColors(
-              selectedContainerColor = LocalStudioColors.current.recordContainer,
-              selectedLabelColor = LocalStudioColors.current.recordAccent,
-            ),
-        )
-      }
     }
   }
 }

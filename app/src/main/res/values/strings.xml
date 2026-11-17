@@ -33,12 +33,6 @@
     <string name="section_recording_mode">Recording Mode</string>
     <string name="section_audio_source">Audio Source</string>
     <string name="section_video_bitrate">Video Bitrate</string>
-    <string name="section_video_codec">Video Codec</string>
-    <string name="codec_h265">H.265</string>
-    <string name="codec_h265_desc">HEVC high efficiency</string>
-    <string name="codec_h264">H.264</string>
-    <string name="codec_h264_desc">AVC wide compatibility</string>
-    <string name="section_video_fps">Frame Rate (FPS)</string>
     <string name="section_region_animation">Region Border Animation</string>
     <string name="section_region_preview">Selected Region</string>
     <string name="section_orientation_mode">Orientation</string>

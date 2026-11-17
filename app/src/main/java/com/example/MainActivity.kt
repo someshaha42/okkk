@@ -169,8 +169,6 @@ private fun FrameCutApp(
           },
           onSelectMode = { viewModel.setRecordingMode(it) },
           onSelectOrientationMode = { viewModel.setOrientationMode(it) },
-          onSelectVideoCodec = { viewModel.setVideoCodec(it) },
-          onSelectVideoFps = { viewModel.setVideoFps(it) },
           onSelectAudioSource = { viewModel.setAudioSource(it) },
           onSelectBitrate = { viewModel.setVideoBitrate(it) },
           onSelectRegionAnimation = { viewModel.setRegionAnimation(it) },

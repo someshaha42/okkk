@@ -1,15 +1,15 @@
 package com.example
 
+import android.media.MediaFormat
 import com.example.region.RegionSelectionManager
 import com.example.settings.AudioSourceOption
+import com.example.settings.InternalRecordingConfig
 import com.example.settings.NormalizedRegion
 import com.example.settings.OrientationMode
 import com.example.settings.RecordingMode
 import com.example.settings.RecordingSettings
 import com.example.settings.RegionAnimationOption
 import com.example.settings.VideoBitrateOption
-import com.example.settings.VideoCodecOption
-import com.example.settings.VideoFpsOption
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -17,23 +17,13 @@ import org.junit.Test
 class RecorderCoreUnitTest {
 
   @Test
-  fun `default settings match specification`() {
+  fun `default settings and fixed internal H265 30fps match specification`() {
     val defaults = RecordingSettings()
     assertEquals(RecordingMode.FULL_SCREEN, defaults.recordingMode)
     assertEquals(OrientationMode.PORTRAIT, defaults.orientationMode)
     assertEquals(listOf(OrientationMode.PORTRAIT, OrientationMode.LANDSCAPE), OrientationMode.entries)
-    assertEquals(VideoCodecOption.H265, defaults.videoCodec)
-    assertEquals(listOf(VideoCodecOption.H265, VideoCodecOption.H264), VideoCodecOption.entries)
-    assertEquals(VideoFpsOption.FPS_60, defaults.videoFps)
-    assertEquals(
-      listOf(
-        VideoFpsOption.FPS_30,
-        VideoFpsOption.FPS_60,
-        VideoFpsOption.FPS_90,
-        VideoFpsOption.FPS_120,
-      ),
-      VideoFpsOption.entries,
-    )
+    assertEquals(MediaFormat.MIMETYPE_VIDEO_HEVC, InternalRecordingConfig.VIDEO_MIME_TYPE)
+    assertEquals(30, InternalRecordingConfig.TARGET_FPS)
     assertEquals(AudioSourceOption.INTERNAL, defaults.audioSource)
     assertEquals(VideoBitrateOption.LOSSLESS, defaults.videoBitrate)
     assertEquals(RegionAnimationOption.SHOW, defaults.regionAnimation)

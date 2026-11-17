@@ -23,6 +23,7 @@ import android.view.Display
 import android.view.Surface
 import android.view.WindowManager
 import com.example.region.PixelRegion
+import com.example.settings.InternalRecordingConfig
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -41,7 +42,6 @@ class ScreenCaptureManager(
   private val outputSurface: Surface,
   private val outputWidth: Int,
   private val outputHeight: Int,
-  private val targetFps: Int = 60,
   private val cropRegion: PixelRegion?,
   private val onProjectionStopped: () -> Unit,
 ) {
@@ -111,7 +111,6 @@ class ScreenCaptureManager(
             encoderSurface = outputSurface,
             outputWidth = outputWidth,
             outputHeight = outputHeight,
-            targetFps = targetFps,
             initialCaptureWidth = w,
             initialCaptureHeight = h,
             cropRegion = cropRegion,
@@ -223,14 +222,13 @@ private class GlVideoPipeline(
   private val encoderSurface: Surface,
   private val outputWidth: Int,
   private val outputHeight: Int,
-  targetFps: Int,
   initialCaptureWidth: Int,
   initialCaptureHeight: Int,
   private val cropRegion: PixelRegion?,
 ) : SurfaceTexture.OnFrameAvailableListener {
 
   private val minFrameIntervalNs =
-    ((1_000_000_000L / targetFps.coerceIn(1, 240)) * 85L) / 100L
+    ((1_000_000_000L / InternalRecordingConfig.TARGET_FPS.coerceIn(1, 240)) * 85L) / 100L
   private var lastSubmittedPtsNs = -1L
 
   private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
