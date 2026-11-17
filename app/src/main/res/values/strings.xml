@@ -35,16 +35,14 @@
     <string name="section_video_bitrate">Video Bitrate</string>
     <string name="section_region_animation">Region Border Animation</string>
     <string name="section_region_preview">Selected Region</string>
-    <string name="section_orientation_mode">Orientation Mode</string>
-    <string name="orientation_native">Native</string>
-    <string name="orientation_native_desc">Auto-adapts canvas on rotation</string>
-    <string name="orientation_landscape">Landscape fixed</string>
-    <string name="orientation_landscape_desc">Locked horizontal canvas</string>
-    <string name="orientation_portrait">Portrait fixed</string>
-    <string name="orientation_portrait_desc">Locked vertical canvas</string>
+    <string name="section_orientation_mode">Orientation</string>
+    <string name="orientation_portrait">Portrait</string>
+    <string name="orientation_portrait_desc">Vertical for Full Screen &amp; Region</string>
+    <string name="orientation_landscape">Landscape</string>
+    <string name="orientation_landscape_desc">Horizontal for Full Screen &amp; Region</string>
 
     <string name="mode_fullscreen">Full Screen</string>
-    <string name="mode_fullscreen_desc">Native resolution capture</string>
+    <string name="mode_fullscreen_desc">Entire display capture</string>
     <string name="mode_region">Region / Area</string>
     <string name="mode_region_desc">GPU-cropped screen rectangle</string>
 

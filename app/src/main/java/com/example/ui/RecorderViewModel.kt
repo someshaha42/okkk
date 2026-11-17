@@ -37,6 +37,8 @@ data class RecorderUiState(
   val session: RecordingSessionState = RecordingSessionState(),
   val screenWidthPx: Int = 1080,
   val screenHeightPx: Int = 2400,
+  val canvasWidthPx: Int = 1080,
+  val canvasHeightPx: Int = 2400,
   val selectedPixelRegion: PixelRegion =
     RegionSelectionManager.toPixelRegion(NormalizedRegion(), 1080, 2400),
   val hasOverlayPermission: Boolean = false,
@@ -82,13 +84,21 @@ class RecorderViewModel(application: Application) : AndroidViewModel(application
         session,
         aux ->
         val (screenW, screenH) = aux.screenDims
+        val (canvasW, canvasH) =
+          RegionSelectionManager.resolveFullScreenDimensions(
+            screenW,
+            screenH,
+            settings.orientationMode,
+          )
         val pixelRegion =
-          RegionSelectionManager.toPixelRegion(settings.selectedRegion, screenW, screenH)
+          RegionSelectionManager.toPixelRegion(settings.selectedRegion, canvasW, canvasH)
         RecorderUiState(
           settings = settings,
           session = session,
           screenWidthPx = screenW,
           screenHeightPx = screenH,
+          canvasWidthPx = canvasW,
+          canvasHeightPx = canvasH,
           selectedPixelRegion = pixelRegion,
           hasOverlayPermission = aux.hasOverlay,
           isEditingRegion = aux.isEditingRegion,

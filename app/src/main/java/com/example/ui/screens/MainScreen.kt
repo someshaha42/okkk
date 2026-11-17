@@ -32,7 +32,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Fullscreen
@@ -41,7 +40,6 @@ import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.StayCurrentLandscape
 import androidx.compose.material.icons.filled.StayCurrentPortrait
 import androidx.compose.material.icons.filled.Stop
@@ -86,7 +84,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.region.RegionSelectionManager
 import com.example.service.RecordingPhase
 import com.example.settings.AudioSourceOption
 import com.example.settings.OrientationMode
@@ -508,25 +505,18 @@ private fun RecordingConsoleCard(
       )
 
       // Contextual live session readout (mode + orientation + active audio route)
+      val orientationSummary =
+        when (uiState.settings.orientationMode) {
+          OrientationMode.PORTRAIT -> stringResource(R.string.orientation_portrait)
+          OrientationMode.LANDSCAPE -> stringResource(R.string.orientation_landscape)
+        }
       val subtitleText =
         if (phase == RecordingPhase.IDLE) {
-          val (resolvedW, resolvedH) =
-            RegionSelectionManager.resolveFullScreenDimensions(
-              uiState.screenWidthPx,
-              uiState.screenHeightPx,
-              uiState.settings.orientationMode,
-            )
           val modeSummary =
             if (uiState.settings.recordingMode == RecordingMode.FULL_SCREEN) {
-              "${stringResource(R.string.mode_fullscreen)} (${resolvedW}×${resolvedH})"
+              "${stringResource(R.string.mode_fullscreen)} (${uiState.canvasWidthPx}×${uiState.canvasHeightPx})"
             } else {
               "${stringResource(R.string.mode_region)} (${uiState.selectedPixelRegion.width}×${uiState.selectedPixelRegion.height})"
-            }
-          val orientationSummary =
-            when (uiState.settings.orientationMode) {
-              OrientationMode.NATIVE -> stringResource(R.string.orientation_native)
-              OrientationMode.LANDSCAPE_FIXED -> stringResource(R.string.orientation_landscape)
-              OrientationMode.PORTRAIT_FIXED -> stringResource(R.string.orientation_portrait)
             }
           val audioSummary =
             if (uiState.settings.audioSource == AudioSourceOption.INTERNAL) {
@@ -534,14 +524,11 @@ private fun RecordingConsoleCard(
             } else {
               stringResource(R.string.audio_microphone)
             }
-          if (uiState.settings.recordingMode == RecordingMode.FULL_SCREEN) {
-            "$modeSummary • $orientationSummary • $audioSummary"
-          } else {
-            "$modeSummary • $audioSummary"
-          }
+          "$modeSummary • $orientationSummary • $audioSummary"
         } else {
           listOfNotNull(
               uiState.session.activeResolutionLabel.takeIf { it.isNotBlank() },
+              orientationSummary,
               uiState.session.activeAudioLabel.takeIf { it.isNotBlank() },
             )
             .joinToString(" • ")
@@ -686,112 +673,32 @@ private fun OrientationModeCard(
 ) {
   SettingsSectionCard(
     title = stringResource(R.string.section_orientation_mode),
-    icon = Icons.Default.ScreenRotation,
+    icon = Icons.Default.StayCurrentPortrait,
   ) {
-    Column(
+    Row(
       modifier = Modifier.fillMaxWidth(),
-      verticalArrangement = Arrangement.spacedBy(8.dp),
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-      OrientationOptionRow(
-        title = stringResource(R.string.orientation_native),
-        subtitle = stringResource(R.string.orientation_native_desc),
-        icon = Icons.Default.ScreenRotation,
-        selected = selectedOrientation == OrientationMode.NATIVE,
-        enabled = enabled,
-        testTag = "orientation_native",
-        onClick = { onSelectOrientation(OrientationMode.NATIVE) },
-      )
-      OrientationOptionRow(
-        title = stringResource(R.string.orientation_landscape),
-        subtitle = stringResource(R.string.orientation_landscape_desc),
-        icon = Icons.Default.StayCurrentLandscape,
-        selected = selectedOrientation == OrientationMode.LANDSCAPE_FIXED,
-        enabled = enabled,
-        testTag = "orientation_landscape",
-        onClick = { onSelectOrientation(OrientationMode.LANDSCAPE_FIXED) },
-      )
-      OrientationOptionRow(
+      OptionTile(
         title = stringResource(R.string.orientation_portrait),
         subtitle = stringResource(R.string.orientation_portrait_desc),
         icon = Icons.Default.StayCurrentPortrait,
-        selected = selectedOrientation == OrientationMode.PORTRAIT_FIXED,
+        selected = selectedOrientation == OrientationMode.PORTRAIT,
         enabled = enabled,
         testTag = "orientation_portrait",
-        onClick = { onSelectOrientation(OrientationMode.PORTRAIT_FIXED) },
-      )
-    }
-  }
-}
-
-@Composable
-private fun OrientationOptionRow(
-  title: String,
-  subtitle: String,
-  icon: ImageVector,
-  selected: Boolean,
-  enabled: Boolean,
-  testTag: String,
-  onClick: () -> Unit,
-) {
-  val studioColors = LocalStudioColors.current
-  val containerColor =
-    if (selected) studioColors.recordContainer
-    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-  val borderColor =
-    if (selected) studioColors.recordAccent else MaterialTheme.colorScheme.outlineVariant
-  val accentColor =
-    if (selected) studioColors.recordAccent else MaterialTheme.colorScheme.onSurface
-
-  Surface(
-    modifier =
-      Modifier.fillMaxWidth()
-        .minimumInteractiveComponentSize()
-        .clip(RoundedCornerShape(14.dp))
-        .clickable(enabled = enabled, onClick = onClick)
-        .testTag(testTag),
-    shape = RoundedCornerShape(14.dp),
-    color = containerColor,
-    border = BorderStroke(if (selected) 1.5.dp else 1.dp, borderColor),
-  ) {
-    Row(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-      Icon(
-        imageVector = icon,
-        contentDescription = null,
-        modifier = Modifier.size(20.dp),
-        tint = accentColor,
-      )
-      Column(
+        onClick = { onSelectOrientation(OrientationMode.PORTRAIT) },
         modifier = Modifier.weight(1f),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-      ) {
-        Text(
-          text = title,
-          style = MaterialTheme.typography.labelLarge,
-          fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
-          color = accentColor,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-          text = subtitle,
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-        )
-      }
-      if (selected) {
-        Icon(
-          imageVector = Icons.Default.CheckCircle,
-          contentDescription = null,
-          modifier = Modifier.size(18.dp),
-          tint = studioColors.recordAccent,
-        )
-      }
+      )
+      OptionTile(
+        title = stringResource(R.string.orientation_landscape),
+        subtitle = stringResource(R.string.orientation_landscape_desc),
+        icon = Icons.Default.StayCurrentLandscape,
+        selected = selectedOrientation == OrientationMode.LANDSCAPE,
+        enabled = enabled,
+        testTag = "orientation_landscape",
+        onClick = { onSelectOrientation(OrientationMode.LANDSCAPE) },
+        modifier = Modifier.weight(1f),
+      )
     }
   }
 }
@@ -806,8 +713,8 @@ private fun RegionPreviewCard(
   val norm = uiState.settings.selectedRegion
   val pixel = uiState.selectedPixelRegion
   val aspect =
-    (uiState.screenWidthPx.toFloat() / uiState.screenHeightPx.toFloat().coerceAtLeast(1f))
-      .coerceIn(0.35f, 2.2f)
+    (uiState.canvasWidthPx.toFloat() / uiState.canvasHeightPx.toFloat().coerceAtLeast(1f))
+      .coerceIn(0.35f, 2.5f)
   val showAnim = uiState.settings.regionAnimation == RegionAnimationOption.SHOW
   val isRecordingActive = uiState.session.phase == RecordingPhase.RECORDING
 

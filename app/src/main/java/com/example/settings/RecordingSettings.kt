@@ -21,9 +21,8 @@ enum class RecordingMode {
 }
 
 enum class OrientationMode {
-  NATIVE,
-  LANDSCAPE_FIXED,
-  PORTRAIT_FIXED,
+  PORTRAIT,
+  LANDSCAPE,
 }
 
 enum class AudioSourceOption {
@@ -66,7 +65,7 @@ data class NormalizedRegion(
 
 data class RecordingSettings(
   val recordingMode: RecordingMode = RecordingMode.FULL_SCREEN,
-  val orientationMode: OrientationMode = OrientationMode.NATIVE,
+  val orientationMode: OrientationMode = OrientationMode.PORTRAIT,
   val audioSource: AudioSourceOption = AudioSourceOption.INTERNAL,
   val videoBitrate: VideoBitrateOption = VideoBitrateOption.LOSSLESS,
   val regionAnimation: RegionAnimationOption = RegionAnimationOption.SHOW,
@@ -110,8 +109,7 @@ class RecordingSettingsRepository(private val context: Context) {
       RecordingSettings(
         recordingMode =
           enumValueOrDefault(prefs[Keys.RECORDING_MODE], RecordingMode.FULL_SCREEN),
-        orientationMode =
-          enumValueOrDefault(prefs[Keys.ORIENTATION_MODE], OrientationMode.NATIVE),
+        orientationMode = parseOrientationMode(prefs[Keys.ORIENTATION_MODE]),
         audioSource =
           enumValueOrDefault(prefs[Keys.AUDIO_SOURCE], AudioSourceOption.INTERNAL),
         videoBitrate =
@@ -156,6 +154,14 @@ class RecordingSettingsRepository(private val context: Context) {
       prefs[Keys.REGION_TOP] = clean.top
       prefs[Keys.REGION_RIGHT] = clean.right
       prefs[Keys.REGION_BOTTOM] = clean.bottom
+    }
+  }
+
+  private fun parseOrientationMode(raw: String?): OrientationMode {
+    return when (raw) {
+      OrientationMode.LANDSCAPE.name,
+      "LANDSCAPE_FIXED" -> OrientationMode.LANDSCAPE
+      else -> OrientationMode.PORTRAIT
     }
   }
 

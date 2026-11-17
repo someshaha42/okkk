@@ -18,37 +18,43 @@ class RecorderCoreUnitTest {
   fun `default settings match specification`() {
     val defaults = RecordingSettings()
     assertEquals(RecordingMode.FULL_SCREEN, defaults.recordingMode)
-    assertEquals(OrientationMode.NATIVE, defaults.orientationMode)
+    assertEquals(OrientationMode.PORTRAIT, defaults.orientationMode)
+    assertEquals(listOf(OrientationMode.PORTRAIT, OrientationMode.LANDSCAPE), OrientationMode.entries)
     assertEquals(AudioSourceOption.INTERNAL, defaults.audioSource)
     assertEquals(VideoBitrateOption.LOSSLESS, defaults.videoBitrate)
     assertEquals(RegionAnimationOption.SHOW, defaults.regionAnimation)
   }
 
   @Test
-  fun `orientation mode resolves native, landscape fixed, and portrait fixed dimensions cleanly`() {
-    val nativePortrait =
-      RegionSelectionManager.resolveFullScreenDimensions(1081, 2401, OrientationMode.NATIVE)
-    assertEquals(1080 to 2400, nativePortrait)
-
-    val nativeLandscape =
-      RegionSelectionManager.resolveFullScreenDimensions(2400, 1080, OrientationMode.NATIVE)
-    assertEquals(2400 to 1080, nativeLandscape)
+  fun `orientation mode resolves portrait and landscape dimensions for full screen and region`() {
+    val portraitFromLandscape =
+      RegionSelectionManager.resolveFullScreenDimensions(2401, 1081, OrientationMode.PORTRAIT)
+    assertEquals(1080 to 2400, portraitFromLandscape)
 
     val landscapeFromPortrait =
-      RegionSelectionManager.resolveFullScreenDimensions(
-        1080,
-        2400,
-        OrientationMode.LANDSCAPE_FIXED,
-      )
+      RegionSelectionManager.resolveFullScreenDimensions(1081, 2401, OrientationMode.LANDSCAPE)
     assertEquals(2400 to 1080, landscapeFromPortrait)
 
-    val portraitFromLandscape =
-      RegionSelectionManager.resolveFullScreenDimensions(
-        2400,
-        1080,
-        OrientationMode.PORTRAIT_FIXED,
+    val norm = NormalizedRegion(left = 0.1f, top = 0.2f, right = 0.9f, bottom = 0.7f)
+    val portraitRegion =
+      RegionSelectionManager.toPixelRegion(
+        norm,
+        portraitFromLandscape.first,
+        portraitFromLandscape.second,
       )
-    assertEquals(1080 to 2400, portraitFromLandscape)
+    val landscapeRegion =
+      RegionSelectionManager.toPixelRegion(
+        norm,
+        landscapeFromPortrait.first,
+        landscapeFromPortrait.second,
+      )
+
+    assertTrue(portraitRegion.height > portraitRegion.width)
+    assertTrue(landscapeRegion.width > landscapeRegion.height)
+    assertEquals(0, portraitRegion.width % 2)
+    assertEquals(0, portraitRegion.height % 2)
+    assertEquals(0, landscapeRegion.width % 2)
+    assertEquals(0, landscapeRegion.height % 2)
   }
 
   @Test

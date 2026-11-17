@@ -6,8 +6,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
@@ -102,16 +105,44 @@ fun RegionSelectorOverlay(
 
   // Place control HUD at bottom unless the selection box covers the bottom, then dock at top
   val hudAtTop = draft.bottom > 0.74f && draft.top > 0.24f
+  val canvasAspect =
+    (screenWidthPx.toFloat() / screenHeightPx.toFloat().coerceAtLeast(1f)).coerceIn(0.3f, 3.0f)
 
-  Box(
-    modifier =
-      Modifier.fillMaxSize().onSizeChanged { size ->
-        if (size.width > 0 && size.height > 0) {
-          containerWidthPx = size.width.toFloat()
-          containerHeightPx = size.height.toFloat()
-        }
-      },
+  BoxWithConstraints(
+    modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.88f)),
   ) {
+    val parentAspect =
+      (maxWidth.value / maxHeight.value.coerceAtLeast(1f)).coerceIn(0.3f, 3.0f)
+    val sameOrientation = kotlin.math.abs(parentAspect - canvasAspect) < 0.12f
+
+    val canvasModifier =
+      if (sameOrientation) {
+        Modifier.fillMaxSize()
+      } else if (canvasAspect > parentAspect) {
+        Modifier.align(Alignment.Center)
+          .padding(horizontal = 16.dp)
+          .fillMaxWidth()
+          .aspectRatio(canvasAspect)
+          .border(1.dp, Color.White.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
+          .clip(RoundedCornerShape(12.dp))
+      } else {
+        Modifier.align(Alignment.Center)
+          .padding(vertical = 24.dp)
+          .fillMaxHeight(0.68f)
+          .aspectRatio(canvasAspect)
+          .border(1.dp, Color.White.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
+          .clip(RoundedCornerShape(12.dp))
+      }
+
+    Box(
+      modifier =
+        canvasModifier.onSizeChanged { size ->
+          if (size.width > 0 && size.height > 0) {
+            containerWidthPx = size.width.toFloat()
+            containerHeightPx = size.height.toFloat()
+          }
+        },
+    ) {
     val showRedBorder = regionAnimation == RegionAnimationOption.SHOW
     RegionBorderOverlayCanvas(
       leftFraction = draft.left,
@@ -292,10 +323,12 @@ fun RegionSelectorOverlay(
       },
     )
 
+    }
+
     // Floating control HUD
     Surface(
       modifier =
-        Modifier.align(if (hudAtTop) Alignment.TopCenter else Alignment.BottomCenter)
+        Modifier.align(if (sameOrientation && hudAtTop) Alignment.TopCenter else Alignment.BottomCenter)
           .systemBarsPadding()
           .padding(horizontal = 16.dp, vertical = 12.dp)
           .widthIn(max = 520.dp)

@@ -191,8 +191,8 @@ private fun FrameCutApp(
     if (uiState.isEditingRegion) {
       RegionSelectorOverlay(
         initialRegion = uiState.settings.selectedRegion,
-        screenWidthPx = uiState.screenWidthPx,
-        screenHeightPx = uiState.screenHeightPx,
+        screenWidthPx = uiState.canvasWidthPx,
+        screenHeightPx = uiState.canvasHeightPx,
         regionAnimation = uiState.settings.regionAnimation,
         onConfirm = { region -> viewModel.saveSelectedRegion(region) },
         onCancel = { viewModel.closeRegionEditor() },

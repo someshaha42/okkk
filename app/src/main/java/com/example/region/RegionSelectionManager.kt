@@ -36,14 +36,13 @@ object RegionSelectionManager {
   fun resolveFullScreenDimensions(
     rawWidth: Int,
     rawHeight: Int,
-    orientationMode: OrientationMode = OrientationMode.NATIVE,
+    orientationMode: OrientationMode = OrientationMode.PORTRAIT,
   ): Pair<Int, Int> {
     val evenW = alignEven(rawWidth.coerceAtLeast(128))
     val evenH = alignEven(rawHeight.coerceAtLeast(128))
     return when (orientationMode) {
-      OrientationMode.NATIVE -> evenW to evenH
-      OrientationMode.LANDSCAPE_FIXED -> maxOf(evenW, evenH) to minOf(evenW, evenH)
-      OrientationMode.PORTRAIT_FIXED -> minOf(evenW, evenH) to maxOf(evenW, evenH)
+      OrientationMode.PORTRAIT -> minOf(evenW, evenH) to maxOf(evenW, evenH)
+      OrientationMode.LANDSCAPE -> maxOf(evenW, evenH) to minOf(evenW, evenH)
     }
   }
 
