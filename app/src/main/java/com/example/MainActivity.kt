@@ -6,10 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -35,6 +33,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.compat.PlatformCompat
+import com.example.service.RecordingPhase
 import com.example.ui.RecorderViewModel
 import com.example.ui.components.RegionSelectorOverlay
 import com.example.ui.screens.MainScreen
@@ -104,15 +104,10 @@ private fun FrameCutApp(
     }
 
   fun launchMediaProjectionConsent() {
+    if (uiState.session.phase != RecordingPhase.IDLE) return
     val mgr =
       context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-    val captureIntent =
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-        mgr.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
-      } else {
-        mgr.createScreenCaptureIntent()
-      }
-    projectionLauncher.launch(captureIntent)
+    projectionLauncher.launch(PlatformCompat.createScreenCaptureIntent(mgr))
   }
 
   val recordAudioLauncher =
@@ -141,14 +136,13 @@ private fun FrameCutApp(
     }
 
   fun beginRecordFlow() {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      val hasNotify =
-        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-          PackageManager.PERMISSION_GRANTED
-      if (!hasNotify) {
-        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        return
-      }
+    if (uiState.session.phase != RecordingPhase.IDLE) return
+    val hasNotify =
+      ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+        PackageManager.PERMISSION_GRANTED
+    if (!hasNotify) {
+      notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+      return
     }
 
     val hasAudioPerm =

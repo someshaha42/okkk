@@ -2,7 +2,6 @@ package com.example.ui
 
 import android.app.Application
 import android.content.Intent
-import android.os.Build
 import android.provider.Settings
 import androidx.compose.runtime.Immutable
 import androidx.core.content.ContextCompat
@@ -219,8 +218,8 @@ class RecorderViewModel(application: Application) : AndroidViewModel(application
       }
     runCatching { appContext.startService(intent) }
       .onFailure {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-          runCatching { ContextCompat.startForegroundService(appContext, intent) }
+        RecordingSessionStore.update {
+          it.copy(phase = RecordingPhase.IDLE, elapsedMillis = 0L, showRegionBorder = false)
         }
       }
   }

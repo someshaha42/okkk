@@ -59,14 +59,14 @@ class VideoEncoder(
           MediaCodec.createEncoderByType(InternalRecordingConfig.VIDEO_MIME_TYPE)
         }
 
-    val primaryFormat = buildFormat(selected, includeAdvanced = true)
+    val primaryFormat = buildFormat(codec.codecInfo, selected, includeAdvanced = true)
     try {
       codec.configure(primaryFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
     } catch (e: Exception) {
       Log.w(TAG, "Primary format config rejected; retrying safe baseline config", e)
       val safeBitrate = selected.effectiveBitrateBps.coerceAtMost(50_000_000)
       selected = selected.copy(effectiveBitrateBps = safeBitrate)
-      val safeFormat = buildFormat(selected, includeAdvanced = false)
+      val safeFormat = buildFormat(codec.codecInfo, selected, includeAdvanced = false)
       codec.configure(safeFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
     }
     selection = selected
@@ -92,7 +92,11 @@ class VideoEncoder(
     return selected
   }
 
-  private fun buildFormat(selected: EncoderSelection, includeAdvanced: Boolean): MediaFormat {
+  private fun buildFormat(
+    codecInfo: MediaCodecInfo,
+    selected: EncoderSelection,
+    includeAdvanced: Boolean,
+  ): MediaFormat {
     return MediaFormat.createVideoFormat(
         InternalRecordingConfig.VIDEO_MIME_TYPE,
         selected.alignedWidth,
@@ -108,10 +112,8 @@ class VideoEncoder(
         )
         if (includeAdvanced) {
           setInteger(MediaFormat.KEY_CAPTURE_RATE, InternalRecordingConfig.TARGET_FPS)
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
-          }
-          configureBitrateModeAndProfile(this, selected)
+          setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
+          configureBitrateModeAndProfile(this, codecInfo)
         }
       }
   }
@@ -195,8 +197,7 @@ class VideoEncoder(
     drainThread = null
   }
 
-  private fun configureBitrateModeAndProfile(format: MediaFormat, selected: EncoderSelection) {
-    val info = findCodecInfo(selected.codecName) ?: return
+  private fun configureBitrateModeAndProfile(format: MediaFormat, info: MediaCodecInfo) {
     val caps =
       runCatching { info.getCapabilitiesForType(InternalRecordingConfig.VIDEO_MIME_TYPE) }
         .getOrNull() ?: return
@@ -233,12 +234,7 @@ class VideoEncoder(
     private const val TAG = "VideoEncoder"
 
     fun detectChipsetFamily(): ChipsetFamily {
-      val socManufacturer =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-          Build.SOC_MANUFACTURER.orEmpty()
-        } else {
-          ""
-        }
+      val socManufacturer = Build.SOC_MANUFACTURER.orEmpty()
       val fingerprint =
         listOf(socManufacturer, Build.HARDWARE, Build.BOARD, Build.BRAND)
           .joinToString(" ")
@@ -404,19 +400,7 @@ class VideoEncoder(
     }
 
     private fun isHardwareCodec(info: MediaCodecInfo): Boolean {
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        return !info.isSoftwareOnly
-      }
-      val name = info.name.lowercase()
-      return !name.startsWith("omx.google.") &&
-        !name.startsWith("c2.android.") &&
-        !name.contains("sw")
-    }
-
-    private fun findCodecInfo(name: String): MediaCodecInfo? {
-      return MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.firstOrNull {
-        it.name.equals(name, ignoreCase = true)
-      }
+      return !info.isSoftwareOnly
     }
 
     private fun isSizeAndRateCompatible(

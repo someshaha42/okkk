@@ -3,7 +3,4 @@
     <external-files-path
         name="movies"
         path="Movies" />
-    <external-path
-        name="external_movies"
-        path="Movies" />
 </paths>

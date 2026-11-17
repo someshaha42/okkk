@@ -7,13 +7,10 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.Uri
-import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.util.Log
-import androidx.core.content.FileProvider
-import java.io.File
 import java.nio.ByteBuffer
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -34,7 +31,6 @@ class MediaMuxerManager(
   private var mediaMuxer: MediaMuxer? = null
   private var parcelFd: ParcelFileDescriptor? = null
   private var outputUri: Uri? = null
-  private var outputFile: File? = null
   private var displayName: String = ""
 
   private var videoTrackIndex = -1
@@ -51,42 +47,30 @@ class MediaMuxerManager(
       val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
       displayName = "FrameCut_$timestamp.mp4"
 
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        val resolver: ContentResolver = context.contentResolver
-        val values =
-          ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(
-              MediaStore.Video.Media.RELATIVE_PATH,
-              "${Environment.DIRECTORY_MOVIES}/FrameCut",
-            )
-            put(MediaStore.Video.Media.IS_PENDING, 1)
+      val resolver: ContentResolver = context.contentResolver
+      val values =
+        ContentValues().apply {
+          put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
+          put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+          put(
+            MediaStore.Video.Media.RELATIVE_PATH,
+            "${Environment.DIRECTORY_MOVIES}/FrameCut",
+          )
+          put(MediaStore.Video.Media.IS_PENDING, 1)
+        }
+      val uri =
+        resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+          ?: throw IllegalStateException("Failed to create MediaStore MP4 entry")
+      val pfd =
+        resolver.openFileDescriptor(uri, "rw")
+          ?: run {
+            resolver.delete(uri, null, null)
+            throw IllegalStateException("Failed to open MediaStore file descriptor")
           }
-        val uri =
-          resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-            ?: throw IllegalStateException("Failed to create MediaStore MP4 entry")
-        val pfd =
-          resolver.openFileDescriptor(uri, "rw")
-            ?: run {
-              resolver.delete(uri, null, null)
-              throw IllegalStateException("Failed to open MediaStore file descriptor")
-            }
-        outputUri = uri
-        parcelFd = pfd
-        mediaMuxer = MediaMuxer(pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        return MuxerOutput(uri = uri, displayName = displayName)
-      } else {
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "FrameCut")
-        if (!dir.exists()) dir.mkdirs()
-        val file = File(dir, displayName)
-        outputFile = file
-        val uri =
-          FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        outputUri = uri
-        mediaMuxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        return MuxerOutput(uri = uri, displayName = displayName, filePath = file.absolutePath)
-      }
+      outputUri = uri
+      parcelFd = pfd
+      mediaMuxer = MediaMuxer(pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+      return MuxerOutput(uri = uri, displayName = displayName)
     }
   }
 
@@ -215,22 +199,18 @@ class MediaMuxerManager(
         parcelFd = null
       }
 
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        val uri = outputUri
-        if (uri != null) {
-          if (validOutput) {
-            val doneValues = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
-            runCatching { context.contentResolver.update(uri, doneValues, null, null) }
-          } else {
-            runCatching { context.contentResolver.delete(uri, null, null) }
-          }
+      val uri = outputUri
+      if (uri != null) {
+        if (validOutput) {
+          val doneValues = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+          runCatching { context.contentResolver.update(uri, doneValues, null, null) }
+        } else {
+          runCatching { context.contentResolver.delete(uri, null, null) }
         }
-      } else if (!validOutput) {
-        outputFile?.delete()
       }
 
-      return if (validOutput && outputUri != null) {
-        MuxerOutput(uri = outputUri!!, displayName = displayName, filePath = outputFile?.absolutePath)
+      return if (validOutput && uri != null) {
+        MuxerOutput(uri = uri, displayName = displayName)
       } else {
         null
       }

@@ -55,6 +55,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -392,13 +393,25 @@ private fun VideoPlayerDialog(
             modifier = Modifier.fillMaxWidth().weight(1f).padding(bottom = 16.dp),
             contentAlignment = Alignment.Center,
           ) {
+            var activeVideoView by remember { mutableStateOf<VideoView?>(null) }
+            DisposableEffect(item.uri) {
+              onDispose {
+                activeVideoView?.stopPlayback()
+                activeVideoView = null
+              }
+            }
             AndroidView(
               modifier = Modifier.fillMaxSize(),
               factory = { ctx ->
                 VideoView(ctx).apply {
+                  activeVideoView = this
                   val controller = MediaController(ctx)
                   controller.setAnchorView(this)
                   setMediaController(controller)
+                  setOnErrorListener { _, _, _ ->
+                    onDismiss()
+                    true
+                  }
                   setVideoURI(item.uri)
                   setOnPreparedListener { mp ->
                     mp.isLooping = false

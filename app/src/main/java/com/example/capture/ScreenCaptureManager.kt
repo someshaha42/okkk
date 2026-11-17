@@ -13,7 +13,6 @@ import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
-import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -21,7 +20,7 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Display
 import android.view.Surface
-import android.view.WindowManager
+import com.example.compat.PlatformCompat
 import com.example.region.PixelRegion
 import com.example.settings.InternalRecordingConfig
 import java.nio.ByteBuffer
@@ -70,6 +69,10 @@ class ScreenCaptureManager(
         if (width <= 0 || height <= 0 || isReleased.get()) return
         Log.d(TAG, "onCapturedContentResize: ${width}x$height")
         resizeCapture(width, height)
+      }
+
+      override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
+        Log.d(TAG, "onCapturedContentVisibilityChanged: isVisible=$isVisible")
       }
     }
 
@@ -194,22 +197,7 @@ class ScreenCaptureManager(
     private const val TAG = "ScreenCaptureManager"
 
     fun queryScreenMetrics(context: Context): Triple<Int, Int, Int> {
-      val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-      return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        val bounds = windowManager.maximumWindowMetrics.bounds
-        val dpi =
-          context.resources.displayMetrics.densityDpi.coerceAtLeast(DisplayMetrics.DENSITY_MEDIUM)
-        Triple(bounds.width().coerceAtLeast(128), bounds.height().coerceAtLeast(128), dpi)
-      } else {
-        val metrics = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        windowManager.defaultDisplay.getRealMetrics(metrics)
-        Triple(
-          metrics.widthPixels.coerceAtLeast(128),
-          metrics.heightPixels.coerceAtLeast(128),
-          metrics.densityDpi.coerceAtLeast(DisplayMetrics.DENSITY_MEDIUM),
-        )
-      }
+      return PlatformCompat.queryMaximumDisplayMetrics(context)
     }
   }
 }
@@ -490,6 +478,17 @@ private class GlVideoPipeline(
     surfaceTexture = null
 
     if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
+      if (eglContext != EGL14.EGL_NO_CONTEXT && eglSurface != EGL14.EGL_NO_SURFACE) {
+        EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
+        if (textureId != 0) {
+          GLES20.glDeleteTextures(1, intArrayOf(textureId), 0)
+          textureId = 0
+        }
+        if (programId != 0) {
+          GLES20.glDeleteProgram(programId)
+          programId = 0
+        }
+      }
       EGL14.eglMakeCurrent(eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
       if (eglSurface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(eglDisplay, eglSurface)
       if (eglContext != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(eglDisplay, eglContext)

@@ -10,11 +10,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.pm.ServiceInfo
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
-import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
 import android.util.Log
@@ -25,6 +23,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.audio.AudioCaptureManager
 import com.example.capture.ScreenCaptureManager
+import com.example.compat.PlatformCompat
 import com.example.encoder.EncoderSelection
 import com.example.encoder.VideoEncoder
 import com.example.muxer.MediaMuxerManager
@@ -50,6 +49,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 enum class RecordingPhase {
   IDLE,
@@ -102,7 +102,9 @@ class RecordingService : Service() {
   private var audioCaptureManager: AudioCaptureManager? = null
   private var screenCaptureManager: ScreenCaptureManager? = null
   private var overlayManager: RegionOverlayManager? = null
+  private var activeMediaProjection: MediaProjection? = null
 
+  private val isStopping = AtomicBoolean(false)
   private var recordingStartElapsedMs = 0L
   private var pauseStartElapsedMs = 0L
   private var pausedAccumulatedMs = 0L
@@ -119,10 +121,15 @@ class RecordingService : Service() {
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     when (intent?.action) {
       ACTION_START -> handleStartAction(intent)
-      ACTION_PAUSE -> pauseRecording()
-      ACTION_RESUME -> resumeRecording()
+      ACTION_PAUSE ->
+        if (RecordingSessionStore.state.value.phase == RecordingPhase.RECORDING) pauseRecording()
+        else if (RecordingSessionStore.state.value.phase == RecordingPhase.IDLE) stopSelf()
+      ACTION_RESUME ->
+        if (RecordingSessionStore.state.value.phase == RecordingPhase.PAUSED) resumeRecording()
+        else if (RecordingSessionStore.state.value.phase == RecordingPhase.IDLE) stopSelf()
       ACTION_STOP -> stopRecording()
       ACTION_SET_REGION_ANIMATION -> handleRegionAnimationChange(intent)
+      else -> if (RecordingSessionStore.state.value.phase == RecordingPhase.IDLE) stopSelf()
     }
     return START_NOT_STICKY
   }
@@ -164,12 +171,7 @@ class RecordingService : Service() {
     if (RecordingSessionStore.state.value.phase != RecordingPhase.IDLE) return
 
     val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
-    val resultData: Intent? =
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
-      } else {
-        @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_RESULT_DATA)
-      }
+    val resultData: Intent? = intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
 
     if (resultCode != Activity.RESULT_OK || resultData == null) {
       RecordingSessionStore.update {
@@ -232,8 +234,17 @@ class RecordingService : Service() {
       )
     currentMode = mode
 
-    // Android 14+ requires startForeground() BEFORE MediaProjectionManager.getMediaProjection()
-    startForegroundCompat(isPaused = false, audioSource = audioSource)
+    // Android 14+/16/17 requires startForeground() BEFORE MediaProjectionManager.getMediaProjection()
+    if (!startForegroundCompat(isPaused = false, audioSource = audioSource)) {
+      RecordingSessionStore.update {
+        it.copy(
+          phase = RecordingPhase.IDLE,
+          errorMessage = "Foreground recording service could not be started.",
+        )
+      }
+      stopSelf()
+      return
+    }
 
     val projectionManager =
       getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -259,6 +270,8 @@ class RecordingService : Service() {
       return
     }
 
+    activeMediaProjection = mediaProjection
+    isStopping.set(false)
     startEngine(mediaProjection, settings)
   }
 
@@ -284,10 +297,7 @@ class RecordingService : Service() {
       val hasAudioPermission =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
           PackageManager.PERMISSION_GRANTED
-      val expectAudio =
-        hasAudioPermission &&
-          (settings.audioSource == AudioSourceOption.MICROPHONE ||
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+      val expectAudio = hasAudioPermission
 
       val muxer = MediaMuxerManager(this, expectAudioTrackInitial = expectAudio)
       muxer.prepare()
@@ -402,6 +412,12 @@ class RecordingService : Service() {
     val currentPhase = RecordingSessionStore.state.value.phase
     if (currentPhase == RecordingPhase.IDLE || currentPhase == RecordingPhase.FINALIZING) {
       overlayManager?.hide()
+      if (currentPhase == RecordingPhase.IDLE) {
+        stopSelf()
+      }
+      return
+    }
+    if (!isStopping.compareAndSet(false, true)) {
       return
     }
 
@@ -427,6 +443,7 @@ class RecordingService : Service() {
             else prev.errorMessage,
         )
       }
+      isStopping.set(false)
       runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
       runCatching {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -442,6 +459,10 @@ class RecordingService : Service() {
       runCatching { screenCaptureManager?.stopAndRelease() }
         .onFailure { Log.e(TAG, "Error stopping ScreenCaptureManager", it) }
       screenCaptureManager = null
+
+      runCatching { activeMediaProjection?.stop() }
+        .onFailure { Log.w(TAG, "Error stopping active MediaProjection", it) }
+      activeMediaProjection = null
 
       runCatching { audioCaptureManager?.stopAndRelease() }
         .onFailure { Log.e(TAG, "Error stopping AudioCaptureManager", it) }
@@ -479,27 +500,14 @@ class RecordingService : Service() {
       }
   }
 
-  private fun startForegroundCompat(isPaused: Boolean, audioSource: AudioSourceOption) {
+  private fun startForegroundCompat(isPaused: Boolean, audioSource: AudioSourceOption): Boolean {
     val notification = buildNotification(isPaused)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      val hasRecordAudio =
-        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
-          PackageManager.PERMISSION_GRANTED
-      val fgsType =
-        if (
-          Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-            hasRecordAudio &&
-            audioSource == AudioSourceOption.MICROPHONE
-        ) {
-          ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-        } else {
-          ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-        }
-      startForeground(NOTIFICATION_ID, notification, fgsType)
-    } else {
-      startForeground(NOTIFICATION_ID, notification)
-    }
+    return PlatformCompat.startRecordingForeground(
+      service = this,
+      notificationId = NOTIFICATION_ID,
+      notification = notification,
+      audioSource = audioSource,
+    )
   }
 
   private fun updateNotification(isPaused: Boolean) {
@@ -549,12 +557,13 @@ class RecordingService : Service() {
       else getString(R.string.notification_text_fullscreen)
 
     return NotificationCompat.Builder(this, CHANNEL_ID)
-      .setSmallIcon(R.mipmap.ic_launcher)
+      .setSmallIcon(R.drawable.ic_stat_recording)
       .setContentTitle(title)
       .setContentText(contentText)
       .setContentIntent(contentPendingIntent)
       .setOngoing(true)
       .setOnlyAlertOnce(true)
+      .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
       .setCategory(NotificationCompat.CATEGORY_SERVICE)
       .addAction(
         0,
@@ -567,22 +576,33 @@ class RecordingService : Service() {
   }
 
   private fun createNotificationChannel() {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      val channel =
-        NotificationChannel(
-            CHANNEL_ID,
-            getString(R.string.notification_channel_name),
-            NotificationManager.IMPORTANCE_LOW,
-          )
-          .apply { description = getString(R.string.notification_channel_description) }
-      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-      nm.createNotificationChannel(channel)
+    val channel =
+      NotificationChannel(
+          CHANNEL_ID,
+          getString(R.string.notification_channel_name),
+          NotificationManager.IMPORTANCE_LOW,
+        )
+        .apply { description = getString(R.string.notification_channel_description) }
+    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    nm.createNotificationChannel(channel)
+  }
+
+  override fun onTrimMemory(level: Int) {
+    super.onTrimMemory(level)
+    if (
+      PlatformCompat.shouldReleaseIdleCachesOnTrim(level) &&
+        RecordingSessionStore.state.value.phase == RecordingPhase.IDLE
+    ) {
+      overlayManager?.hide()
+      stopSelf()
     }
   }
 
   override fun onDestroy() {
     timerJob?.cancel()
     overlayManager?.hide()
+    runCatching { activeMediaProjection?.stop() }
+    activeMediaProjection = null
     serviceScope.cancel()
     super.onDestroy()
   }

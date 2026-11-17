@@ -8,8 +8,6 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RectF
-import android.graphics.Region
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -18,6 +16,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.LinearInterpolator
+import com.example.compat.PlatformCompat
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -29,7 +28,9 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class RegionOverlayManager(private val context: Context) {
 
-  private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+  private val windowManager: WindowManager by lazy {
+    PlatformCompat.resolveOverlayWindowManager(context)
+  }
   private val mainHandler = Handler(Looper.getMainLooper())
   private val generation = AtomicLong(0L)
   private var overlayView: RegionBorderOverlayView? = null
@@ -51,18 +52,11 @@ class RegionOverlayManager(private val context: Context) {
       }
 
       val view = RegionBorderOverlayView(context, region)
-      val windowType =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-          @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
-        }
-
       val params =
         WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            windowType,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
               WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
               WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -73,14 +67,9 @@ class RegionOverlayManager(private val context: Context) {
             x = 0
             y = 0
             gravity = Gravity.TOP or Gravity.START
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-              fitInsetsTypes = 0
-              layoutInDisplayCutoutMode =
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-              layoutInDisplayCutoutMode =
-                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-            }
+            fitInsetsTypes = 0
+            layoutInDisplayCutoutMode =
+              WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
           }
 
       runCatching {
@@ -238,12 +227,7 @@ internal class RegionBorderOverlayView(
       val clipT = localTop - safetyGapPx
       val clipR = localRight + safetyGapPx
       val clipB = localBottom + safetyGapPx
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        canvas.clipOutRect(clipL, clipT, clipR, clipB)
-      } else {
-        @Suppress("DEPRECATION")
-        canvas.clipRect(clipL, clipT, clipR, clipB, Region.Op.DIFFERENCE)
-      }
+      canvas.clipOutRect(clipL, clipT, clipR, clipB)
 
       canvas.drawRect(drawRect, backingPaint)
       borderPaint.pathEffect = DashPathEffect(floatArrayOf(dashLength, gapLength), phase)

@@ -15,7 +15,6 @@ import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaRecorder
 import android.media.projection.MediaProjection
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -72,15 +71,6 @@ class AudioCaptureManager(
         isCapturing = false,
         activeDeviceLabel = "Muted (No audio permission)",
         warningMessage = "Audio permission not granted; recording video only.",
-      ).also(onStatusChanged)
-    }
-
-    if (audioSource == AudioSourceOption.INTERNAL && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-      muxerManager.disableAudioTrack()
-      return AudioCaptureStatus(
-        isCapturing = false,
-        activeDeviceLabel = "Unavailable (< Android 10)",
-        warningMessage = "Internal audio capture requires Android 10 or higher; recording video only.",
       ).also(onStatusChanged)
     }
 
@@ -219,10 +209,7 @@ class AudioCaptureManager(
             .build()
 
         val record =
-          if (
-            audioSource == AudioSourceOption.INTERNAL &&
-              Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
-          ) {
+          if (audioSource == AudioSourceOption.INTERNAL) {
             val projection = mediaProjection ?: return null
             val captureConfig =
               AudioPlaybackCaptureConfiguration.Builder(projection)
@@ -283,13 +270,13 @@ class AudioCaptureManager(
     val callback =
       object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
-          if (!isRunning.get()) return
+          if (!isRunning.get() || record.state != AudioRecord.STATE_INITIALIZED) return
           val label = applyBestMicrophoneDevice(record)
           onStatusChanged(AudioCaptureStatus(isCapturing = true, activeDeviceLabel = label))
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
-          if (!isRunning.get()) return
+          if (!isRunning.get() || record.state != AudioRecord.STATE_INITIALIZED) return
           val label = applyBestMicrophoneDevice(record)
           onStatusChanged(AudioCaptureStatus(isCapturing = true, activeDeviceLabel = label))
         }
@@ -332,11 +319,18 @@ class AudioCaptureManager(
           break
         }
 
-      if (bytesRead <= 0) {
-        if (bytesRead == AudioRecord.ERROR_DEAD_OBJECT) {
-          Log.w(TAG, "AudioRecord dead object; stopping audio capture safely")
-          break
-        }
+      if (bytesRead < 0) {
+        Log.w(TAG, "AudioRecord.read returned error=$bytesRead; stopping audio capture safely")
+        onStatusChanged(
+          AudioCaptureStatus(
+            isCapturing = false,
+            activeDeviceLabel = "Audio interrupted",
+            warningMessage = "Audio source stopped or was restricted; continuing video recording.",
+          ),
+        )
+        break
+      }
+      if (bytesRead == 0) {
         continue
       }
 
@@ -422,6 +416,9 @@ class AudioCaptureManager(
           }
         }
       }
+    }
+    if (!trackAdded) {
+      muxerManager.disableAudioTrack()
     }
   }
 
