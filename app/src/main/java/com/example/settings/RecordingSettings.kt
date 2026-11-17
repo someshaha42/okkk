@@ -25,6 +25,18 @@ enum class OrientationMode {
   LANDSCAPE,
 }
 
+enum class VideoCodecOption(val mimeType: String, val label: String) {
+  H265(MediaFormat.MIMETYPE_VIDEO_HEVC, "H.265"),
+  H264(MediaFormat.MIMETYPE_VIDEO_AVC, "H.264"),
+}
+
+enum class VideoFpsOption(val fps: Int, val label: String) {
+  FPS_30(30, "30 FPS"),
+  FPS_60(60, "60 FPS"),
+  FPS_90(90, "90 FPS"),
+  FPS_120(120, "120 FPS"),
+}
+
 enum class AudioSourceOption {
   INTERNAL,
   MICROPHONE,
@@ -66,6 +78,8 @@ data class NormalizedRegion(
 data class RecordingSettings(
   val recordingMode: RecordingMode = RecordingMode.FULL_SCREEN,
   val orientationMode: OrientationMode = OrientationMode.PORTRAIT,
+  val videoCodec: VideoCodecOption = VideoCodecOption.H265,
+  val videoFps: VideoFpsOption = VideoFpsOption.FPS_60,
   val audioSource: AudioSourceOption = AudioSourceOption.INTERNAL,
   val videoBitrate: VideoBitrateOption = VideoBitrateOption.LOSSLESS,
   val regionAnimation: RegionAnimationOption = RegionAnimationOption.SHOW,
@@ -73,16 +87,19 @@ data class RecordingSettings(
 )
 
 /**
- * Fixed internal recording parameters. These are intentionally internal and not exposed for user
- * modification in the UI.
+ * Fixed internal hardware encoder preferences and audio encoding constants.
  */
 object InternalRecordingConfig {
-  const val TARGET_FPS = 60
-  const val VIDEO_MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
   const val SNAPDRAGON_AVC_ENCODER = "c2.qti.avc.encoder"
   const val SNAPDRAGON_LEGACY_AVC_ENCODER = "OMX.qcom.video.encoder.avc"
   const val MEDIATEK_AVC_ENCODER = "c2.mtk.avc.encoder"
   const val MEDIATEK_LEGACY_AVC_ENCODER = "OMX.MTK.VIDEO.ENCODER.AVC"
+
+  const val SNAPDRAGON_HEVC_ENCODER = "c2.qti.hevc.encoder"
+  const val SNAPDRAGON_LEGACY_HEVC_ENCODER = "OMX.qcom.video.encoder.hevc"
+  const val MEDIATEK_HEVC_ENCODER = "c2.mtk.hevc.encoder"
+  const val MEDIATEK_LEGACY_HEVC_ENCODER = "OMX.MTK.VIDEO.ENCODER.HEVC"
+
   const val SURFACE_COLOR_FORMAT = MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface
   const val I_FRAME_INTERVAL_SECONDS = 1
 
@@ -95,6 +112,8 @@ class RecordingSettingsRepository(private val context: Context) {
   private object Keys {
     val RECORDING_MODE = stringPreferencesKey("recording_mode")
     val ORIENTATION_MODE = stringPreferencesKey("orientation_mode")
+    val VIDEO_CODEC = stringPreferencesKey("video_codec")
+    val VIDEO_FPS = stringPreferencesKey("video_fps")
     val AUDIO_SOURCE = stringPreferencesKey("audio_source")
     val VIDEO_BITRATE = stringPreferencesKey("video_bitrate")
     val REGION_ANIMATION = stringPreferencesKey("region_animation")
@@ -110,6 +129,10 @@ class RecordingSettingsRepository(private val context: Context) {
         recordingMode =
           enumValueOrDefault(prefs[Keys.RECORDING_MODE], RecordingMode.FULL_SCREEN),
         orientationMode = parseOrientationMode(prefs[Keys.ORIENTATION_MODE]),
+        videoCodec =
+          enumValueOrDefault(prefs[Keys.VIDEO_CODEC], VideoCodecOption.H265),
+        videoFps =
+          enumValueOrDefault(prefs[Keys.VIDEO_FPS], VideoFpsOption.FPS_60),
         audioSource =
           enumValueOrDefault(prefs[Keys.AUDIO_SOURCE], AudioSourceOption.INTERNAL),
         videoBitrate =
@@ -133,6 +156,14 @@ class RecordingSettingsRepository(private val context: Context) {
 
   suspend fun setOrientationMode(mode: OrientationMode) {
     context.settingsDataStore.edit { it[Keys.ORIENTATION_MODE] = mode.name }
+  }
+
+  suspend fun setVideoCodec(codec: VideoCodecOption) {
+    context.settingsDataStore.edit { it[Keys.VIDEO_CODEC] = codec.name }
+  }
+
+  suspend fun setVideoFps(fps: VideoFpsOption) {
+    context.settingsDataStore.edit { it[Keys.VIDEO_FPS] = fps.name }
   }
 
   suspend fun setAudioSource(source: AudioSourceOption) {

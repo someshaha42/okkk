@@ -37,6 +37,8 @@ import com.example.settings.RecordingMode
 import com.example.settings.RecordingSettings
 import com.example.settings.RegionAnimationOption
 import com.example.settings.VideoBitrateOption
+import com.example.settings.VideoCodecOption
+import com.example.settings.VideoFpsOption
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -63,6 +65,8 @@ data class RecordingSessionState(
   val activeMode: RecordingMode = RecordingMode.FULL_SCREEN,
   val activeAudioLabel: String = "",
   val activeEncoderName: String = "",
+  val activeCodecLabel: String = "",
+  val activeFps: Int = 60,
   val activeBitrateMbps: Int = 0,
   val activeResolutionLabel: String = "",
   val activeRegion: PixelRegion? = null,
@@ -188,6 +192,20 @@ class RecordingService : Service() {
         "LANDSCAPE_FIXED" -> OrientationMode.LANDSCAPE
         else -> OrientationMode.PORTRAIT
       }
+    val videoCodec =
+      runCatching {
+          VideoCodecOption.valueOf(
+            intent.getStringExtra(EXTRA_VIDEO_CODEC) ?: VideoCodecOption.H265.name,
+          )
+        }
+        .getOrDefault(VideoCodecOption.H265)
+    val videoFps =
+      runCatching {
+          VideoFpsOption.valueOf(
+            intent.getStringExtra(EXTRA_VIDEO_FPS) ?: VideoFpsOption.FPS_60.name,
+          )
+        }
+        .getOrDefault(VideoFpsOption.FPS_60)
     val audioSource =
       runCatching {
           AudioSourceOption.valueOf(
@@ -223,6 +241,8 @@ class RecordingService : Service() {
       RecordingSettings(
         recordingMode = mode,
         orientationMode = orientationMode,
+        videoCodec = videoCodec,
+        videoFps = videoFps,
         audioSource = audioSource,
         videoBitrate = bitrate,
         regionAnimation = animation,
@@ -291,7 +311,15 @@ class RecordingService : Service() {
       muxer.prepare()
       muxerManager = muxer
 
-      val encoder = VideoEncoder(targetW, targetH, settings.videoBitrate, muxer)
+      val encoder =
+        VideoEncoder(
+          requestedWidth = targetW,
+          requestedHeight = targetH,
+          codecOption = settings.videoCodec,
+          fpsOption = settings.videoFps,
+          bitrateOption = settings.videoBitrate,
+          muxerManager = muxer,
+        )
       val selection: EncoderSelection = encoder.prepare()
       videoEncoder = encoder
 
@@ -320,6 +348,7 @@ class RecordingService : Service() {
           outputSurface = encoder.getInputSurface(),
           outputWidth = selection.alignedWidth,
           outputHeight = selection.alignedHeight,
+          targetFps = selection.effectiveFps,
           cropRegion = pixelRegion,
           onProjectionStopped = { stopRecording() },
         )
@@ -346,6 +375,8 @@ class RecordingService : Service() {
           activeMode = settings.recordingMode,
           activeAudioLabel = audioStatus.activeDeviceLabel,
           activeEncoderName = selection.codecName,
+          activeCodecLabel = selection.effectiveCodec.label,
+          activeFps = selection.effectiveFps,
           activeBitrateMbps = (selection.effectiveBitrateBps / 1_000_000).coerceAtLeast(1),
           activeResolutionLabel = "${selection.alignedWidth}×${selection.alignedHeight}",
           activeRegion = pixelRegion,
@@ -595,6 +626,8 @@ class RecordingService : Service() {
     const val EXTRA_RESULT_DATA = "extra_result_data"
     const val EXTRA_MODE = "extra_mode"
     const val EXTRA_ORIENTATION_MODE = "extra_orientation_mode"
+    const val EXTRA_VIDEO_CODEC = "extra_video_codec"
+    const val EXTRA_VIDEO_FPS = "extra_video_fps"
     const val EXTRA_AUDIO_SOURCE = "extra_audio_source"
     const val EXTRA_BITRATE = "extra_bitrate"
     const val EXTRA_REGION_ANIMATION = "extra_region_animation"
@@ -615,6 +648,8 @@ class RecordingService : Service() {
         putExtra(EXTRA_RESULT_DATA, resultData)
         putExtra(EXTRA_MODE, settings.recordingMode.name)
         putExtra(EXTRA_ORIENTATION_MODE, settings.orientationMode.name)
+        putExtra(EXTRA_VIDEO_CODEC, settings.videoCodec.name)
+        putExtra(EXTRA_VIDEO_FPS, settings.videoFps.name)
         putExtra(EXTRA_AUDIO_SOURCE, settings.audioSource.name)
         putExtra(EXTRA_BITRATE, settings.videoBitrate.name)
         putExtra(EXTRA_REGION_ANIMATION, settings.regionAnimation.name)

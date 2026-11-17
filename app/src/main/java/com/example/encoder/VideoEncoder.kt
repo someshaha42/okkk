@@ -10,6 +10,8 @@ import android.view.Surface
 import com.example.muxer.MediaMuxerManager
 import com.example.settings.InternalRecordingConfig
 import com.example.settings.VideoBitrateOption
+import com.example.settings.VideoCodecOption
+import com.example.settings.VideoFpsOption
 import java.util.concurrent.atomic.AtomicBoolean
 
 enum class ChipsetFamily {
@@ -20,20 +22,25 @@ enum class ChipsetFamily {
 
 data class EncoderSelection(
   val codecName: String,
+  val effectiveCodec: VideoCodecOption,
   val isHardwareAccelerated: Boolean,
   val chipsetFamily: ChipsetFamily,
   val effectiveBitrateBps: Int,
+  val effectiveFps: Int,
   val alignedWidth: Int,
   val alignedHeight: Int,
 )
 
 /**
- * Hardware-first H.264/AVC MediaCodec encoder with chipset detection (Snapdragon c2.qti.avc.encoder,
- * MediaTek c2.mtk.avc.encoder), automatic capability clamping, and dedicated surface input.
+ * Hardware-first H.265/HEVC & H.264/AVC MediaCodec encoder with chipset detection (Snapdragon
+ * c2.qti.hevc/avc.encoder, MediaTek c2.mtk.hevc/avc.encoder), FPS configuration (30/60/90/120),
+ * automatic capability clamping, and dedicated surface input.
  */
 class VideoEncoder(
   private val requestedWidth: Int,
   private val requestedHeight: Int,
+  private val codecOption: VideoCodecOption,
+  private val fpsOption: VideoFpsOption,
   private val bitrateOption: VideoBitrateOption,
   private val muxerManager: MediaMuxerManager,
 ) {
@@ -44,61 +51,34 @@ class VideoEncoder(
   private var selection: EncoderSelection? = null
 
   fun prepare(): EncoderSelection {
-    val selected = selectBestEncoder(requestedWidth, requestedHeight, bitrateOption)
-    selection = selected
-
-    val format =
-      MediaFormat.createVideoFormat(
-          InternalRecordingConfig.VIDEO_MIME_TYPE,
-          selected.alignedWidth,
-          selected.alignedHeight,
-        )
-        .apply {
-          setInteger(MediaFormat.KEY_COLOR_FORMAT, InternalRecordingConfig.SURFACE_COLOR_FORMAT)
-          setInteger(MediaFormat.KEY_BIT_RATE, selected.effectiveBitrateBps)
-          setInteger(MediaFormat.KEY_FRAME_RATE, InternalRecordingConfig.TARGET_FPS)
-          setInteger(MediaFormat.KEY_CAPTURE_RATE, InternalRecordingConfig.TARGET_FPS)
-          setInteger(
-            MediaFormat.KEY_I_FRAME_INTERVAL,
-            InternalRecordingConfig.I_FRAME_INTERVAL_SECONDS,
-          )
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
-          }
-          configureBitrateModeAndProfile(this, selected)
-        }
+    var selected =
+      selectBestEncoder(
+        requestedWidth = requestedWidth,
+        requestedHeight = requestedHeight,
+        codecOption = codecOption,
+        fpsOption = fpsOption,
+        bitrateOption = bitrateOption,
+      )
 
     val codec =
       runCatching { MediaCodec.createByCodecName(selected.codecName) }
         .getOrElse {
           Log.w(TAG, "Preferred codec ${selected.codecName} failed to instantiate, using default", it)
-          MediaCodec.createEncoderByType(InternalRecordingConfig.VIDEO_MIME_TYPE)
+          MediaCodec.createEncoderByType(selected.effectiveCodec.mimeType)
         }
 
+    val primaryFormat = buildFormat(selected, includeAdvanced = true)
     try {
-      codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+      codec.configure(primaryFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
     } catch (e: Exception) {
       Log.w(TAG, "Primary format config rejected; retrying safe baseline config", e)
-      val safeFormat =
-        MediaFormat.createVideoFormat(
-            InternalRecordingConfig.VIDEO_MIME_TYPE,
-            selected.alignedWidth,
-            selected.alignedHeight,
-          )
-          .apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, InternalRecordingConfig.SURFACE_COLOR_FORMAT)
-            setInteger(
-              MediaFormat.KEY_BIT_RATE,
-              selected.effectiveBitrateBps.coerceAtMost(50_000_000),
-            )
-            setInteger(MediaFormat.KEY_FRAME_RATE, InternalRecordingConfig.TARGET_FPS)
-            setInteger(
-              MediaFormat.KEY_I_FRAME_INTERVAL,
-              InternalRecordingConfig.I_FRAME_INTERVAL_SECONDS,
-            )
-          }
+      val safeFps = selected.effectiveFps.coerceAtMost(60)
+      val safeBitrate = selected.effectiveBitrateBps.coerceAtMost(50_000_000)
+      selected = selected.copy(effectiveFps = safeFps, effectiveBitrateBps = safeBitrate)
+      val safeFormat = buildFormat(selected, includeAdvanced = false)
       codec.configure(safeFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
     }
+    selection = selected
 
     inputSurface = codec.createInputSurface()
     codec.start()
@@ -113,11 +93,39 @@ class VideoEncoder(
 
     Log.i(
       TAG,
-      "VideoEncoder started: codec=${selected.codecName}, hw=${selected.isHardwareAccelerated}, " +
+      "VideoEncoder started: codec=${selected.codecName} (${selected.effectiveCodec.label}), " +
+        "fps=${selected.effectiveFps}, hw=${selected.isHardwareAccelerated}, " +
         "chipset=${selected.chipsetFamily}, size=${selected.alignedWidth}x${selected.alignedHeight}, " +
         "bitrate=${selected.effectiveBitrateBps / 1_000_000}Mbps",
     )
     return selected
+  }
+
+  private fun buildFormat(selected: EncoderSelection, includeAdvanced: Boolean): MediaFormat {
+    return MediaFormat.createVideoFormat(
+        selected.effectiveCodec.mimeType,
+        selected.alignedWidth,
+        selected.alignedHeight,
+      )
+      .apply {
+        setInteger(MediaFormat.KEY_COLOR_FORMAT, InternalRecordingConfig.SURFACE_COLOR_FORMAT)
+        setInteger(MediaFormat.KEY_BIT_RATE, selected.effectiveBitrateBps)
+        setInteger(MediaFormat.KEY_FRAME_RATE, selected.effectiveFps)
+        setInteger(
+          MediaFormat.KEY_I_FRAME_INTERVAL,
+          InternalRecordingConfig.I_FRAME_INTERVAL_SECONDS,
+        )
+        if (includeAdvanced) {
+          setInteger(MediaFormat.KEY_CAPTURE_RATE, selected.effectiveFps)
+          if (selected.effectiveFps > 60) {
+            setInteger(MediaFormat.KEY_OPERATING_RATE, selected.effectiveFps)
+          }
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
+          }
+          configureBitrateModeAndProfile(this, selected)
+        }
+      }
   }
 
   fun getInputSurface(): Surface =
@@ -202,8 +210,8 @@ class VideoEncoder(
 
   private fun configureBitrateModeAndProfile(format: MediaFormat, selected: EncoderSelection) {
     val info = findCodecInfo(selected.codecName) ?: return
-    val caps = runCatching { info.getCapabilitiesForType(InternalRecordingConfig.VIDEO_MIME_TYPE) }.getOrNull()
-      ?: return
+    val mime = selected.effectiveCodec.mimeType
+    val caps = runCatching { info.getCapabilitiesForType(mime) }.getOrNull() ?: return
 
     val encoderCaps = caps.encoderCapabilities
     if (encoderCaps != null) {
@@ -222,13 +230,16 @@ class VideoEncoder(
     }
 
     if (bitrateOption == VideoBitrateOption.LOSSLESS) {
-      val highProfile =
-        caps.profileLevels?.filter {
-          it.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
-        }?.maxByOrNull { it.level }
-      if (highProfile != null) {
-        format.setInteger(MediaFormat.KEY_PROFILE, highProfile.profile)
-        format.setInteger(MediaFormat.KEY_LEVEL, highProfile.level)
+      val targetProfile =
+        when (selected.effectiveCodec) {
+          VideoCodecOption.H265 -> MediaCodecInfo.CodecProfileLevel.HEVCProfileMain
+          VideoCodecOption.H264 -> MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
+        }
+      val matchedProfile =
+        caps.profileLevels?.filter { it.profile == targetProfile }?.maxByOrNull { it.level }
+      if (matchedProfile != null) {
+        format.setInteger(MediaFormat.KEY_PROFILE, matchedProfile.profile)
+        format.setInteger(MediaFormat.KEY_LEVEL, matchedProfile.level)
       }
     }
   }
@@ -264,63 +275,40 @@ class VideoEncoder(
     fun selectBestEncoder(
       requestedWidth: Int,
       requestedHeight: Int,
-      bitrateOption: VideoBitrateOption,
+      codecOption: VideoCodecOption = VideoCodecOption.H265,
+      fpsOption: VideoFpsOption = VideoFpsOption.FPS_60,
+      bitrateOption: VideoBitrateOption = VideoBitrateOption.LOSSLESS,
       availableCodecs: List<MediaCodecInfo> =
         MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.toList(),
       chipsetFamily: ChipsetFamily = detectChipsetFamily(),
     ): EncoderSelection {
-      val avcEncoders =
-        availableCodecs.filter { info ->
-          info.isEncoder &&
-            info.supportedTypes.any { it.equals(InternalRecordingConfig.VIDEO_MIME_TYPE, true) } &&
-            supportsSurfaceInput(info)
-        }
+      var effectiveCodec = codecOption
+      var chosenInfo = findPreferredCodecInfo(effectiveCodec, availableCodecs, chipsetFamily)
 
-      val hardwareEncoders = avcEncoders.filter { isHardwareCodec(it) }
-      val pool = hardwareEncoders.ifEmpty { avcEncoders }
-
-      val preferredNames =
-        when (chipsetFamily) {
-          ChipsetFamily.SNAPDRAGON ->
-            listOf(
-              InternalRecordingConfig.SNAPDRAGON_AVC_ENCODER,
-              InternalRecordingConfig.SNAPDRAGON_LEGACY_AVC_ENCODER,
-            )
-          ChipsetFamily.MEDIATEK ->
-            listOf(
-              InternalRecordingConfig.MEDIATEK_AVC_ENCODER,
-              InternalRecordingConfig.MEDIATEK_LEGACY_AVC_ENCODER,
-            )
-          ChipsetFamily.OTHER ->
-            listOf(
-              InternalRecordingConfig.SNAPDRAGON_AVC_ENCODER,
-              InternalRecordingConfig.MEDIATEK_AVC_ENCODER,
-            )
-        }
-
-      val chosenInfo =
-        preferredNames.firstNotNullOfOrNull { targetName ->
-          pool.firstOrNull { it.name.equals(targetName, ignoreCase = true) }
-        }
-          ?: pool.firstOrNull { it.name.startsWith("c2.", ignoreCase = true) }
-          ?: pool.firstOrNull()
+      if (chosenInfo == null && effectiveCodec == VideoCodecOption.H265) {
+        Log.w(TAG, "No H.265 surface encoder found; falling back to H.264")
+        effectiveCodec = VideoCodecOption.H264
+        chosenInfo = findPreferredCodecInfo(effectiveCodec, availableCodecs, chipsetFamily)
+      }
 
       if (chosenInfo == null) {
         val evenW = alignTo(requestedWidth.coerceAtLeast(128), 2)
         val evenH = alignTo(requestedHeight.coerceAtLeast(128), 2)
         return EncoderSelection(
-          codecName = "default-avc",
+          codecName =
+            if (effectiveCodec == VideoCodecOption.H265) "default-hevc" else "default-avc",
+          effectiveCodec = effectiveCodec,
           isHardwareAccelerated = false,
           chipsetFamily = chipsetFamily,
           effectiveBitrateBps = bitrateOption.targetBitsPerSecond.coerceAtMost(50_000_000),
+          effectiveFps = fpsOption.fps.coerceAtMost(60),
           alignedWidth = evenW,
           alignedHeight = evenH,
         )
       }
 
       val caps =
-        runCatching { chosenInfo.getCapabilitiesForType(InternalRecordingConfig.VIDEO_MIME_TYPE) }
-          .getOrNull()
+        runCatching { chosenInfo.getCapabilitiesForType(effectiveCodec.mimeType) }.getOrNull()
       val videoCaps = caps?.videoCapabilities
 
       val wAlign = (videoCaps?.widthAlignment ?: 2).coerceAtLeast(2)
@@ -355,20 +343,95 @@ class VideoEncoder(
           bitrateOption.targetBitsPerSecond
         }
 
+      val effectiveFps =
+        if (videoCaps != null) {
+          val fpsRange =
+            runCatching { videoCaps.getSupportedFrameRatesFor(alignedW, alignedH) }
+              .getOrNull()
+              ?.let { it.lower.toInt().coerceAtLeast(1)..it.upper.toInt().coerceAtLeast(30) }
+              ?: (videoCaps.supportedFrameRates.lower.coerceAtLeast(1)..videoCaps.supportedFrameRates.upper.coerceAtLeast(30))
+          fpsOption.fps.coerceIn(fpsRange.first, fpsRange.last)
+        } else {
+          fpsOption.fps
+        }
+
       return EncoderSelection(
         codecName = chosenInfo.name,
+        effectiveCodec = effectiveCodec,
         isHardwareAccelerated = isHardwareCodec(chosenInfo),
         chipsetFamily = chipsetFamily,
         effectiveBitrateBps = effectiveBitrate,
+        effectiveFps = effectiveFps,
         alignedWidth = alignedW,
         alignedHeight = alignedH,
       )
     }
 
-    private fun supportsSurfaceInput(info: MediaCodecInfo): Boolean {
-      val caps =
-        runCatching { info.getCapabilitiesForType(InternalRecordingConfig.VIDEO_MIME_TYPE) }
-          .getOrNull() ?: return false
+    private fun findPreferredCodecInfo(
+      codecOption: VideoCodecOption,
+      availableCodecs: List<MediaCodecInfo>,
+      chipsetFamily: ChipsetFamily,
+    ): MediaCodecInfo? {
+      val matchingEncoders =
+        availableCodecs.filter { info ->
+          info.isEncoder &&
+            info.supportedTypes.any { it.equals(codecOption.mimeType, true) } &&
+            supportsSurfaceInput(info, codecOption.mimeType)
+        }
+      if (matchingEncoders.isEmpty()) return null
+
+      val hardwareEncoders = matchingEncoders.filter { isHardwareCodec(it) }
+      val pool = hardwareEncoders.ifEmpty { matchingEncoders }
+
+      val preferredNames =
+        when (codecOption) {
+          VideoCodecOption.H265 ->
+            when (chipsetFamily) {
+              ChipsetFamily.SNAPDRAGON ->
+                listOf(
+                  InternalRecordingConfig.SNAPDRAGON_HEVC_ENCODER,
+                  InternalRecordingConfig.SNAPDRAGON_LEGACY_HEVC_ENCODER,
+                )
+              ChipsetFamily.MEDIATEK ->
+                listOf(
+                  InternalRecordingConfig.MEDIATEK_HEVC_ENCODER,
+                  InternalRecordingConfig.MEDIATEK_LEGACY_HEVC_ENCODER,
+                )
+              ChipsetFamily.OTHER ->
+                listOf(
+                  InternalRecordingConfig.SNAPDRAGON_HEVC_ENCODER,
+                  InternalRecordingConfig.MEDIATEK_HEVC_ENCODER,
+                )
+            }
+          VideoCodecOption.H264 ->
+            when (chipsetFamily) {
+              ChipsetFamily.SNAPDRAGON ->
+                listOf(
+                  InternalRecordingConfig.SNAPDRAGON_AVC_ENCODER,
+                  InternalRecordingConfig.SNAPDRAGON_LEGACY_AVC_ENCODER,
+                )
+              ChipsetFamily.MEDIATEK ->
+                listOf(
+                  InternalRecordingConfig.MEDIATEK_AVC_ENCODER,
+                  InternalRecordingConfig.MEDIATEK_LEGACY_AVC_ENCODER,
+                )
+              ChipsetFamily.OTHER ->
+                listOf(
+                  InternalRecordingConfig.SNAPDRAGON_AVC_ENCODER,
+                  InternalRecordingConfig.MEDIATEK_AVC_ENCODER,
+                )
+            }
+        }
+
+      return preferredNames.firstNotNullOfOrNull { targetName ->
+        pool.firstOrNull { it.name.equals(targetName, ignoreCase = true) }
+      }
+        ?: pool.firstOrNull { it.name.startsWith("c2.", ignoreCase = true) }
+        ?: pool.firstOrNull()
+    }
+
+    private fun supportsSurfaceInput(info: MediaCodecInfo, mimeType: String): Boolean {
+      val caps = runCatching { info.getCapabilitiesForType(mimeType) }.getOrNull() ?: return false
       return caps.colorFormats.contains(InternalRecordingConfig.SURFACE_COLOR_FORMAT)
     }
 

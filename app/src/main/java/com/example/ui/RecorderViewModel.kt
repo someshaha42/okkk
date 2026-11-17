@@ -24,6 +24,8 @@ import com.example.settings.RecordingSettings
 import com.example.settings.RecordingSettingsRepository
 import com.example.settings.RegionAnimationOption
 import com.example.settings.VideoBitrateOption
+import com.example.settings.VideoCodecOption
+import com.example.settings.VideoFpsOption
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -144,6 +146,22 @@ class RecorderViewModel(application: Application) : AndroidViewModel(application
     viewModelScope.launch { settingsRepo.setOrientationMode(mode) }
   }
 
+  @Volatile private var latestVideoCodecOverride: VideoCodecOption? = null
+
+  fun setVideoCodec(codec: VideoCodecOption) {
+    if (uiState.value.session.phase != RecordingPhase.IDLE) return
+    latestVideoCodecOverride = codec
+    viewModelScope.launch { settingsRepo.setVideoCodec(codec) }
+  }
+
+  @Volatile private var latestVideoFpsOverride: VideoFpsOption? = null
+
+  fun setVideoFps(fps: VideoFpsOption) {
+    if (uiState.value.session.phase != RecordingPhase.IDLE) return
+    latestVideoFpsOverride = fps
+    viewModelScope.launch { settingsRepo.setVideoFps(fps) }
+  }
+
   fun setAudioSource(source: AudioSourceOption) {
     if (uiState.value.session.phase != RecordingPhase.IDLE) return
     viewModelScope.launch { settingsRepo.setAudioSource(source) }
@@ -191,10 +209,14 @@ class RecorderViewModel(application: Application) : AndroidViewModel(application
   fun startRecording(resultCode: Int, resultData: Intent) {
     val baseSettings = uiState.value.settings
     val effectiveOrientation = latestOrientationModeOverride ?: baseSettings.orientationMode
+    val effectiveCodec = latestVideoCodecOverride ?: baseSettings.videoCodec
+    val effectiveFps = latestVideoFpsOverride ?: baseSettings.videoFps
     val effectiveAnimation = latestRegionAnimationOverride ?: baseSettings.regionAnimation
     val currentSettings =
       baseSettings.copy(
         orientationMode = effectiveOrientation,
+        videoCodec = effectiveCodec,
+        videoFps = effectiveFps,
         regionAnimation = effectiveAnimation,
       )
     val intent =

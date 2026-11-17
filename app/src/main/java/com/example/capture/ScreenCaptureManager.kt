@@ -41,6 +41,7 @@ class ScreenCaptureManager(
   private val outputSurface: Surface,
   private val outputWidth: Int,
   private val outputHeight: Int,
+  private val targetFps: Int = 60,
   private val cropRegion: PixelRegion?,
   private val onProjectionStopped: () -> Unit,
 ) {
@@ -110,6 +111,7 @@ class ScreenCaptureManager(
             encoderSurface = outputSurface,
             outputWidth = outputWidth,
             outputHeight = outputHeight,
+            targetFps = targetFps,
             initialCaptureWidth = w,
             initialCaptureHeight = h,
             cropRegion = cropRegion,
@@ -221,10 +223,15 @@ private class GlVideoPipeline(
   private val encoderSurface: Surface,
   private val outputWidth: Int,
   private val outputHeight: Int,
+  targetFps: Int,
   initialCaptureWidth: Int,
   initialCaptureHeight: Int,
   private val cropRegion: PixelRegion?,
 ) : SurfaceTexture.OnFrameAvailableListener {
+
+  private val minFrameIntervalNs =
+    ((1_000_000_000L / targetFps.coerceIn(1, 240)) * 85L) / 100L
+  private var lastSubmittedPtsNs = -1L
 
   private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
   private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
@@ -442,6 +449,10 @@ private class GlVideoPipeline(
         firstFrameNs = nowNs
       }
       val ptsNs = (nowNs - firstFrameNs - pausedAccumulatedNs).coerceAtLeast(0L)
+      if (lastSubmittedPtsNs >= 0L && (ptsNs - lastSubmittedPtsNs) < minFrameIntervalNs) {
+        return
+      }
+      lastSubmittedPtsNs = ptsNs
 
       GLES20.glViewport(0, 0, outputWidth, outputHeight)
       GLES20.glClearColor(0f, 0f, 0f, 1f)

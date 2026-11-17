@@ -8,6 +8,8 @@ import com.example.settings.RecordingMode
 import com.example.settings.RecordingSettings
 import com.example.settings.RegionAnimationOption
 import com.example.settings.VideoBitrateOption
+import com.example.settings.VideoCodecOption
+import com.example.settings.VideoFpsOption
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,6 +22,18 @@ class RecorderCoreUnitTest {
     assertEquals(RecordingMode.FULL_SCREEN, defaults.recordingMode)
     assertEquals(OrientationMode.PORTRAIT, defaults.orientationMode)
     assertEquals(listOf(OrientationMode.PORTRAIT, OrientationMode.LANDSCAPE), OrientationMode.entries)
+    assertEquals(VideoCodecOption.H265, defaults.videoCodec)
+    assertEquals(listOf(VideoCodecOption.H265, VideoCodecOption.H264), VideoCodecOption.entries)
+    assertEquals(VideoFpsOption.FPS_60, defaults.videoFps)
+    assertEquals(
+      listOf(
+        VideoFpsOption.FPS_30,
+        VideoFpsOption.FPS_60,
+        VideoFpsOption.FPS_90,
+        VideoFpsOption.FPS_120,
+      ),
+      VideoFpsOption.entries,
+    )
     assertEquals(AudioSourceOption.INTERNAL, defaults.audioSource)
     assertEquals(VideoBitrateOption.LOSSLESS, defaults.videoBitrate)
     assertEquals(RegionAnimationOption.SHOW, defaults.regionAnimation)
