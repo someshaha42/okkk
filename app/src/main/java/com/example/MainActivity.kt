@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -63,6 +64,11 @@ class MainActivity : ComponentActivity() {
 
   override fun onResume() {
     super.onResume()
+    viewModel.refreshSystemState()
+  }
+
+  override fun onConfigurationChanged(newConfig: Configuration) {
+    super.onConfigurationChanged(newConfig)
     viewModel.refreshSystemState()
   }
 
@@ -161,20 +167,23 @@ private fun FrameCutApp(
         MainScreen(
           uiState = uiState,
           onStartRecordClick = { beginRecordFlow() },
-          onPauseResumeClick = { viewModel.togglePauseResume() },
-          onStopClick = { viewModel.stopRecording() },
-          onOpenRecordings = {
-            viewModel.refreshRecordings()
-            navController.navigate(ROUTE_RECORDINGS) { launchSingleTop = true }
-          },
-          onSelectMode = { viewModel.setRecordingMode(it) },
-          onSelectOrientationMode = { viewModel.setOrientationMode(it) },
-          onSelectAudioSource = { viewModel.setAudioSource(it) },
-          onSelectBitrate = { viewModel.setVideoBitrate(it) },
-          onSelectRegionAnimation = { viewModel.setRegionAnimation(it) },
-          onEditRegion = { viewModel.openRegionEditor() },
+          onPauseResumeClick = remember(viewModel) { viewModel::togglePauseResume },
+          onStopClick = remember(viewModel) { viewModel::stopRecording },
+          onOpenRecordings =
+            remember(viewModel, navController) {
+              {
+                viewModel.refreshRecordings()
+                navController.navigate(ROUTE_RECORDINGS) { launchSingleTop = true }
+              }
+            },
+          onSelectMode = remember(viewModel) { viewModel::setRecordingMode },
+          onSelectOrientationMode = remember(viewModel) { viewModel::setOrientationMode },
+          onSelectAudioSource = remember(viewModel) { viewModel::setAudioSource },
+          onSelectBitrate = remember(viewModel) { viewModel::setVideoBitrate },
+          onSelectRegionAnimation = remember(viewModel) { viewModel::setRegionAnimation },
+          onEditRegion = remember(viewModel) { viewModel::openRegionEditor },
           onRequestOverlayPermission = onOpenOverlaySettings,
-          onDismissMessages = { viewModel.clearMessages() },
+          onDismissMessages = remember(viewModel) { viewModel::clearMessages },
         )
       }
 

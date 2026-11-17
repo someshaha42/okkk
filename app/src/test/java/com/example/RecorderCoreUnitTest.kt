@@ -25,7 +25,22 @@ class RecorderCoreUnitTest {
     assertEquals(MediaFormat.MIMETYPE_VIDEO_HEVC, InternalRecordingConfig.VIDEO_MIME_TYPE)
     assertEquals(30, InternalRecordingConfig.TARGET_FPS)
     assertEquals(AudioSourceOption.INTERNAL, defaults.audioSource)
-    assertEquals(VideoBitrateOption.LOSSLESS, defaults.videoBitrate)
+    assertEquals(VideoBitrateOption.MBPS_150, defaults.videoBitrate)
+    assertEquals(
+      listOf(
+        VideoBitrateOption.MBPS_100,
+        VideoBitrateOption.MBPS_150,
+        VideoBitrateOption.MBPS_200,
+        VideoBitrateOption.MBPS_250,
+        VideoBitrateOption.MBPS_300,
+        VideoBitrateOption.MBPS_350,
+      ),
+      VideoBitrateOption.entries,
+    )
+    assertEquals(
+      listOf(100_000_000, 150_000_000, 200_000_000, 250_000_000, 300_000_000, 350_000_000),
+      VideoBitrateOption.entries.map { it.targetBitsPerSecond },
+    )
     assertEquals(RegionAnimationOption.SHOW, defaults.regionAnimation)
   }
 

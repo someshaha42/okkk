@@ -51,12 +51,12 @@
     <string name="audio_microphone">Microphone</string>
     <string name="audio_microphone_desc">External mic prioritized automatically</string>
 
-    <string name="bitrate_lossless">Lossless</string>
-    <string name="bitrate_lossless_note">Highest supported hardware H.264 quality (near-lossless perceptual ceiling)</string>
-    <string name="bitrate_200">200 Mbps</string>
-    <string name="bitrate_150">150 Mbps</string>
     <string name="bitrate_100">100 Mbps</string>
-    <string name="bitrate_50">50 Mbps</string>
+    <string name="bitrate_150">150 Mbps</string>
+    <string name="bitrate_200">200 Mbps</string>
+    <string name="bitrate_250">250 Mbps</string>
+    <string name="bitrate_300">300 Mbps</string>
+    <string name="bitrate_350">350 Mbps</string>
 
     <string name="anim_show">Show</string>
     <string name="anim_hide">Hide</string>

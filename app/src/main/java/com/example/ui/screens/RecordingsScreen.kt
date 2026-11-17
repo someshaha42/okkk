@@ -2,11 +2,18 @@ package com.example.ui.screens
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.widget.MediaController
 import android.widget.VideoView
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -18,7 +25,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -42,6 +53,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +61,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -75,6 +91,12 @@ fun RecordingsScreen(
 ) {
   BackHandler(onBack = onBack)
   val context = LocalContext.current
+  val configuration = LocalConfiguration.current
+  val isTelevision =
+    remember(configuration.uiMode) {
+      (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+        Configuration.UI_MODE_TYPE_TELEVISION
+    }
 
   var playingItem by remember { mutableStateOf<RecordedVideoItem?>(null) }
   var pendingDelete by remember { mutableStateOf<RecordedVideoItem?>(null) }
@@ -84,7 +106,13 @@ fun RecordingsScreen(
       TopAppBar(
         title = { Text(stringResource(R.string.recordings_title)) },
         navigationIcon = {
-          IconButton(onClick = onBack, modifier = Modifier.testTag("recordings_back_button")) {
+          IconButton(
+            onClick = onBack,
+            modifier =
+              Modifier.minimumInteractiveComponentSize()
+                .focusHighlight(CircleShape)
+                .testTag("recordings_back_button"),
+          ) {
             Icon(
               imageVector = Icons.AutoMirrored.Filled.ArrowBack,
               contentDescription = stringResource(R.string.cd_back_button),
@@ -94,10 +122,13 @@ fun RecordingsScreen(
       )
     },
   ) { innerPadding ->
-    Box(
+    BoxWithConstraints(
       modifier = Modifier.fillMaxSize().padding(innerPadding),
       contentAlignment = Alignment.TopCenter,
     ) {
+      val useGrid = maxWidth >= 700.dp
+      val gridPadding = if (isTelevision) 28.dp else 16.dp
+
       when {
         isLoading && recordings.isEmpty() -> {
           Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -107,10 +138,28 @@ fun RecordingsScreen(
         recordings.isEmpty() -> {
           EmptyRecordingsState(modifier = Modifier.fillMaxSize().padding(32.dp))
         }
+        useGrid -> {
+          LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 340.dp),
+            modifier = Modifier.widthIn(max = 1240.dp).fillMaxSize(),
+            contentPadding = PaddingValues(gridPadding),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+          ) {
+            items(recordings, key = { it.id.toString() + it.displayName }) { item ->
+              RecordingItemCard(
+                item = item,
+                onPlay = { playingItem = item },
+                onShare = { shareVideo(context, item) },
+                onRequestDelete = { pendingDelete = item },
+              )
+            }
+          }
+        }
         else -> {
           LazyColumn(
             modifier = Modifier.widthIn(max = 680.dp).fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(gridPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
           ) {
             items(recordings, key = { it.id.toString() + it.displayName }) { item ->
@@ -128,7 +177,7 @@ fun RecordingsScreen(
   }
 
   playingItem?.let { item ->
-    VideoPlayerDialog(item = item, onDismiss = { playingItem = null })
+    VideoPlayerDialog(item = item, isTelevision = isTelevision, onDismiss = { playingItem = null })
   }
 
   pendingDelete?.let { item ->
@@ -163,12 +212,30 @@ private fun RecordingItemCard(
   onRequestDelete: () -> Unit,
 ) {
   val studioColors = LocalStudioColors.current
+  val interactionSource = remember { MutableInteractionSource() }
+  val isFocused by interactionSource.collectIsFocusedAsState()
+  val isHovered by interactionSource.collectIsHoveredAsState()
+
+  val border =
+    when {
+      isFocused -> BorderStroke(2.5.dp, MaterialTheme.colorScheme.primary)
+      isHovered -> BorderStroke(1.5.dp, MaterialTheme.colorScheme.outline)
+      else -> BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    }
+
   Card(
     onClick = onPlay,
+    interactionSource = interactionSource,
     modifier = Modifier.fillMaxWidth().testTag("recording_card_${item.id}"),
     shape = RoundedCornerShape(16.dp),
-    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    border = border,
+    colors =
+      CardDefaults.cardColors(
+        containerColor =
+          if (isFocused || isHovered) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+          else MaterialTheme.colorScheme.surface,
+      ),
+    elevation = CardDefaults.cardElevation(defaultElevation = if (isFocused) 4.dp else 1.dp),
   ) {
     Row(
       modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -212,19 +279,28 @@ private fun RecordingItemCard(
         )
       }
 
-      IconButton(onClick = onPlay) {
+      IconButton(
+        onClick = onPlay,
+        modifier = Modifier.minimumInteractiveComponentSize().focusHighlight(CircleShape),
+      ) {
         Icon(
           imageVector = Icons.Default.PlayArrow,
           contentDescription = stringResource(R.string.action_play),
         )
       }
-      IconButton(onClick = onShare) {
+      IconButton(
+        onClick = onShare,
+        modifier = Modifier.minimumInteractiveComponentSize().focusHighlight(CircleShape),
+      ) {
         Icon(
           imageVector = Icons.Default.Share,
           contentDescription = stringResource(R.string.action_share),
         )
       }
-      IconButton(onClick = onRequestDelete) {
+      IconButton(
+        onClick = onRequestDelete,
+        modifier = Modifier.minimumInteractiveComponentSize().focusHighlight(CircleShape),
+      ) {
         Icon(
           imageVector = Icons.Default.DeleteOutline,
           contentDescription = stringResource(R.string.action_delete),
@@ -271,59 +347,82 @@ private fun EmptyRecordingsState(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun VideoPlayerDialog(item: RecordedVideoItem, onDismiss: () -> Unit) {
+private fun VideoPlayerDialog(
+  item: RecordedVideoItem,
+  isTelevision: Boolean,
+  onDismiss: () -> Unit,
+) {
   Dialog(
     onDismissRequest = onDismiss,
     properties = DialogProperties(usePlatformDefaultWidth = false),
   ) {
-    Surface(
-      modifier = Modifier.fillMaxSize().padding(16.dp),
-      shape = RoundedCornerShape(20.dp),
-      color = MaterialTheme.colorScheme.surface,
+    Box(
+      modifier = Modifier.fillMaxSize().padding(if (isTelevision) 28.dp else 16.dp),
+      contentAlignment = Alignment.Center,
     ) {
-      Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Text(
-            text = item.displayName,
-            style = MaterialTheme.typography.titleSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-          )
-          IconButton(onClick = onDismiss) {
-            Icon(
-              imageVector = Icons.Default.Close,
-              contentDescription = stringResource(R.string.action_close),
+      Surface(
+        modifier = Modifier.widthIn(max = 1080.dp).fillMaxSize(),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface,
+      ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Text(
+              text = item.displayName,
+              style = MaterialTheme.typography.titleSmall,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f),
+            )
+            IconButton(
+              onClick = onDismiss,
+              modifier = Modifier.minimumInteractiveComponentSize().focusHighlight(CircleShape),
+            ) {
+              Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = stringResource(R.string.action_close),
+              )
+            }
+          }
+          Box(
+            modifier = Modifier.fillMaxWidth().weight(1f).padding(bottom = 16.dp),
+            contentAlignment = Alignment.Center,
+          ) {
+            AndroidView(
+              modifier = Modifier.fillMaxSize(),
+              factory = { ctx ->
+                VideoView(ctx).apply {
+                  val controller = MediaController(ctx)
+                  controller.setAnchorView(this)
+                  setMediaController(controller)
+                  setVideoURI(item.uri)
+                  setOnPreparedListener { mp ->
+                    mp.isLooping = false
+                    start()
+                  }
+                }
+              },
             )
           }
-        }
-        Box(
-          modifier = Modifier.fillMaxWidth().weight(1f).padding(bottom = 16.dp),
-          contentAlignment = Alignment.Center,
-        ) {
-          AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-              VideoView(ctx).apply {
-                val controller = MediaController(ctx)
-                controller.setAnchorView(this)
-                setMediaController(controller)
-                setVideoURI(item.uri)
-                setOnPreparedListener { mp ->
-                  mp.isLooping = false
-                  start()
-                }
-              }
-            },
-          )
         }
       }
     }
   }
+}
+
+@Composable
+private fun Modifier.focusHighlight(
+  shape: Shape = RoundedCornerShape(14.dp),
+  focusColor: Color = MaterialTheme.colorScheme.primary,
+): Modifier {
+  var isFocused by remember { mutableStateOf(false) }
+  return this.then(
+    if (isFocused) Modifier.border(2.5.dp, focusColor, shape) else Modifier,
+  ).onFocusChanged { isFocused = it.isFocused }
 }
 
 private fun shareVideo(context: Context, item: RecordedVideoItem) {

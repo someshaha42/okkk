@@ -3,6 +3,7 @@ package com.example.settings
 import android.content.Context
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import androidx.compose.runtime.Immutable
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -31,11 +32,12 @@ enum class AudioSourceOption {
 }
 
 enum class VideoBitrateOption(val targetBitsPerSecond: Int, val label: String) {
-  LOSSLESS(250_000_000, "Lossless"),
-  MBPS_200(200_000_000, "200 Mbps"),
-  MBPS_150(150_000_000, "150 Mbps"),
   MBPS_100(100_000_000, "100 Mbps"),
-  MBPS_50(50_000_000, "50 Mbps"),
+  MBPS_150(150_000_000, "150 Mbps"),
+  MBPS_200(200_000_000, "200 Mbps"),
+  MBPS_250(250_000_000, "250 Mbps"),
+  MBPS_300(300_000_000, "300 Mbps"),
+  MBPS_350(350_000_000, "350 Mbps"),
 }
 
 enum class RegionAnimationOption {
@@ -47,6 +49,7 @@ enum class RegionAnimationOption {
  * Normalized rectangular region in [0f..1f] relative to the full screen dimensions. Storing
  * normalized fractions allows restoring the selected area consistently across launches.
  */
+@Immutable
 data class NormalizedRegion(
   val left: Float = 0.1f,
   val top: Float = 0.2f,
@@ -63,11 +66,12 @@ data class NormalizedRegion(
   }
 }
 
+@Immutable
 data class RecordingSettings(
   val recordingMode: RecordingMode = RecordingMode.FULL_SCREEN,
   val orientationMode: OrientationMode = OrientationMode.PORTRAIT,
   val audioSource: AudioSourceOption = AudioSourceOption.INTERNAL,
-  val videoBitrate: VideoBitrateOption = VideoBitrateOption.LOSSLESS,
+  val videoBitrate: VideoBitrateOption = VideoBitrateOption.MBPS_150,
   val regionAnimation: RegionAnimationOption = RegionAnimationOption.SHOW,
   val selectedRegion: NormalizedRegion = NormalizedRegion(),
 )
@@ -115,7 +119,7 @@ class RecordingSettingsRepository(private val context: Context) {
         audioSource =
           enumValueOrDefault(prefs[Keys.AUDIO_SOURCE], AudioSourceOption.INTERNAL),
         videoBitrate =
-          enumValueOrDefault(prefs[Keys.VIDEO_BITRATE], VideoBitrateOption.LOSSLESS),
+          enumValueOrDefault(prefs[Keys.VIDEO_BITRATE], VideoBitrateOption.MBPS_150),
         regionAnimation =
           enumValueOrDefault(prefs[Keys.REGION_ANIMATION], RegionAnimationOption.SHOW),
         selectedRegion =

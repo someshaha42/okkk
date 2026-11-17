@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
@@ -9,7 +10,10 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -47,7 +52,6 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -71,13 +75,19 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -114,6 +124,12 @@ fun MainScreen(
 ) {
   val isIdle = uiState.session.phase == RecordingPhase.IDLE
   val settingsAlpha = if (isIdle) 1f else 0.58f
+  val configuration = LocalConfiguration.current
+  val isTelevision =
+    remember(configuration.uiMode) {
+      (configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+        Configuration.UI_MODE_TYPE_TELEVISION
+    }
 
   Scaffold(
     topBar = {
@@ -146,7 +162,10 @@ fun MainScreen(
         actions = {
           IconButton(
             onClick = onOpenRecordings,
-            modifier = Modifier.minimumInteractiveComponentSize().testTag("recordings_nav_button"),
+            modifier =
+              Modifier.minimumInteractiveComponentSize()
+                .focusRing(shape = CircleShape)
+                .testTag("recordings_nav_button"),
           ) {
             BadgedBox(
               badge = {
@@ -171,223 +190,358 @@ fun MainScreen(
       modifier = Modifier.fillMaxSize().padding(innerPadding),
       contentAlignment = Alignment.TopCenter,
     ) {
-      val isWide = maxWidth >= 700.dp
+      val isExpandedTwoPane = maxWidth >= 840.dp
+      val useTwoColumnsInRightPane = maxWidth >= 1060.dp
+      val isWideSettingsGrid = maxWidth >= 660.dp
+      val horizontalPadding = if (isTelevision || isExpandedTwoPane) 24.dp else 16.dp
+      val verticalPadding = if (isTelevision) 14.dp else 8.dp
+      val bannerText = uiState.session.errorMessage ?: uiState.session.warningMessage
 
-      Column(
-        modifier =
-          Modifier.widthIn(max = 880.dp)
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-      ) {
-        // Error or warning feedback banner
-        val bannerText = uiState.session.errorMessage ?: uiState.session.warningMessage
-        AnimatedVisibility(visible = bannerText != null) {
-          if (bannerText != null) {
-            val isError = uiState.session.errorMessage != null
-            Surface(
-              shape = RoundedCornerShape(14.dp),
-              color =
-                if (isError) MaterialTheme.colorScheme.errorContainer
-                else LocalStudioColors.current.pausedContainer,
-              modifier = Modifier.fillMaxWidth(),
-            ) {
-              Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-              ) {
-                Text(
-                  text = bannerText,
-                  style = MaterialTheme.typography.bodyMedium,
-                  modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = onDismissMessages) {
-                  Text(stringResource(R.string.action_close))
-                }
-              }
-            }
-          }
-        }
-
-        // Hero Recording Console
-        RecordingConsoleCard(
-          uiState = uiState,
-          onStartRecordClick = onStartRecordClick,
-          onPauseResumeClick = onPauseResumeClick,
-          onStopClick = onStopClick,
-        )
-
-        // Saved video quick banner when idle and a recording was just saved
-        AnimatedVisibility(visible = isIdle && uiState.session.lastSavedName != null) {
-          uiState.session.lastSavedName?.let { fileName ->
-            Surface(
-              onClick = onOpenRecordings,
-              shape = RoundedCornerShape(14.dp),
-              color = LocalStudioColors.current.readyContainer,
-              modifier = Modifier.fillMaxWidth().testTag("last_saved_banner"),
-            ) {
-              Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-              ) {
-                Column(modifier = Modifier.weight(1f)) {
-                  Text(
-                    text = "Saved to Movies/FrameCut",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = LocalStudioColors.current.readyAccent,
-                  )
-                  Text(
-                    text = fileName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                  )
-                }
-                Text(
-                  text = stringResource(R.string.action_play),
-                  style = MaterialTheme.typography.labelLarge,
-                  color = LocalStudioColors.current.readyAccent,
-                )
-              }
-            }
-          }
-        }
-
-        // Settings cards (2-column on wide screens, 1-column on phones)
-        if (isWide) {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-          ) {
-            Column(
-              modifier = Modifier.weight(1f),
-              verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-              Box(modifier = Modifier.alpha(settingsAlpha)) {
-                RecordingModeCard(
-                  selectedMode = uiState.settings.recordingMode,
-                  enabled = isIdle,
-                  onSelectMode = onSelectMode,
-                )
-              }
-              if (uiState.settings.recordingMode == RecordingMode.REGION) {
-                Box(modifier = Modifier.alpha(settingsAlpha)) {
-                  RegionPreviewCard(
-                    uiState = uiState,
-                    enabled = isIdle,
-                    onEditRegion = onEditRegion,
-                    onRequestOverlayPermission = onRequestOverlayPermission,
-                  )
-                }
-              }
-              Box(modifier = Modifier.alpha(settingsAlpha)) {
-                OrientationModeCard(
-                  selectedOrientation = uiState.settings.orientationMode,
-                  enabled = isIdle,
-                  onSelectOrientation = onSelectOrientationMode,
-                )
-              }
-              RegionAnimationCard(
-                selectedAnimation = uiState.settings.regionAnimation,
-                enabled = true,
-                onSelect = onSelectRegionAnimation,
-              )
-            }
-            Column(
-              modifier = Modifier.weight(1f).alpha(settingsAlpha),
-              verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-              AudioSourceCard(
-                selectedAudio = uiState.settings.audioSource,
-                enabled = isIdle,
-                onSelectAudio = onSelectAudioSource,
-              )
-              VideoBitrateCard(
-                selectedBitrate = uiState.settings.videoBitrate,
-                enabled = isIdle,
-                onSelectBitrate = onSelectBitrate,
-              )
-            }
-          }
-        } else {
+      if (isExpandedTwoPane) {
+        // Canonical 2-pane layout for Tablets (Landscape), Android TV, Foldables & ChromeOS
+        Row(
+          modifier =
+            Modifier.widthIn(max = 1280.dp)
+              .fillMaxSize()
+              .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+          horizontalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+          // Left anchored studio console pane (always visible & immediately focusable on TV)
           Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier =
+              Modifier.widthIn(min = 310.dp, max = 400.dp)
+                .weight(0.38f)
+                .fillMaxHeight()
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp),
           ) {
-            Box(modifier = Modifier.alpha(settingsAlpha)) {
-              RecordingModeCard(
-                selectedMode = uiState.settings.recordingMode,
-                enabled = isIdle,
-                onSelectMode = onSelectMode,
-              )
-            }
+            FeedbackBanner(
+              bannerText = bannerText,
+              isError = uiState.session.errorMessage != null,
+              onDismissMessages = onDismissMessages,
+            )
+            RecordingConsoleCard(
+              uiState = uiState,
+              onStartRecordClick = onStartRecordClick,
+              onPauseResumeClick = onPauseResumeClick,
+              onStopClick = onStopClick,
+            )
+            SavedVideoQuickBanner(
+              visible = isIdle && uiState.session.lastSavedName != null,
+              fileName = uiState.session.lastSavedName,
+              onOpenRecordings = onOpenRecordings,
+            )
+            RecordingsLibraryButton(
+              count = uiState.recordings.size,
+              onOpenRecordings = onOpenRecordings,
+            )
+          }
 
-            AnimatedVisibility(visible = uiState.settings.recordingMode == RecordingMode.REGION) {
-              Box(modifier = Modifier.alpha(settingsAlpha)) {
-                RegionPreviewCard(
-                  uiState = uiState,
-                  enabled = isIdle,
-                  onEditRegion = onEditRegion,
-                  onRequestOverlayPermission = onRequestOverlayPermission,
-                )
-              }
-            }
+          // Right independently scrollable settings pane (2-column grid on ultra-wide/TV)
+          Column(
+            modifier =
+              Modifier.weight(0.62f)
+                .fillMaxHeight()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+          ) {
+            SettingsCardsSection(
+              uiState = uiState,
+              isIdle = isIdle,
+              settingsAlpha = settingsAlpha,
+              twoColumns = useTwoColumnsInRightPane,
+              onSelectMode = onSelectMode,
+              onSelectOrientationMode = onSelectOrientationMode,
+              onSelectAudioSource = onSelectAudioSource,
+              onSelectBitrate = onSelectBitrate,
+              onSelectRegionAnimation = onSelectRegionAnimation,
+              onEditRegion = onEditRegion,
+              onRequestOverlayPermission = onRequestOverlayPermission,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+          }
+        }
+      } else {
+        Column(
+          modifier =
+            Modifier.widthIn(max = 820.dp)
+              .fillMaxSize()
+              .verticalScroll(rememberScrollState())
+              .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+          verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+          FeedbackBanner(
+            bannerText = bannerText,
+            isError = uiState.session.errorMessage != null,
+            onDismissMessages = onDismissMessages,
+          )
+          RecordingConsoleCard(
+            uiState = uiState,
+            onStartRecordClick = onStartRecordClick,
+            onPauseResumeClick = onPauseResumeClick,
+            onStopClick = onStopClick,
+          )
+          SavedVideoQuickBanner(
+            visible = isIdle && uiState.session.lastSavedName != null,
+            fileName = uiState.session.lastSavedName,
+            onOpenRecordings = onOpenRecordings,
+          )
+          SettingsCardsSection(
+            uiState = uiState,
+            isIdle = isIdle,
+            settingsAlpha = settingsAlpha,
+            twoColumns = isWideSettingsGrid,
+            onSelectMode = onSelectMode,
+            onSelectOrientationMode = onSelectOrientationMode,
+            onSelectAudioSource = onSelectAudioSource,
+            onSelectBitrate = onSelectBitrate,
+            onSelectRegionAnimation = onSelectRegionAnimation,
+            onEditRegion = onEditRegion,
+            onRequestOverlayPermission = onRequestOverlayPermission,
+          )
+          RecordingsLibraryButton(
+            count = uiState.recordings.size,
+            onOpenRecordings = onOpenRecordings,
+          )
+          Spacer(modifier = Modifier.height(12.dp))
+        }
+      }
+    }
+  }
+}
 
-            Box(modifier = Modifier.alpha(settingsAlpha)) {
-              OrientationModeCard(
-                selectedOrientation = uiState.settings.orientationMode,
-                enabled = isIdle,
-                onSelectOrientation = onSelectOrientationMode,
-              )
-            }
+@Composable
+private fun FeedbackBanner(
+  bannerText: String?,
+  isError: Boolean,
+  onDismissMessages: () -> Unit,
+) {
+  AnimatedVisibility(visible = bannerText != null) {
+    if (bannerText != null) {
+      Surface(
+        shape = RoundedCornerShape(14.dp),
+        color =
+          if (isError) MaterialTheme.colorScheme.errorContainer
+          else LocalStudioColors.current.pausedContainer,
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Text(
+            text = bannerText,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+          )
+          TextButton(
+            onClick = onDismissMessages,
+            modifier = Modifier.focusRing(RoundedCornerShape(10.dp)),
+          ) {
+            Text(stringResource(R.string.action_close))
+          }
+        }
+      }
+    }
+  }
+}
 
-            Box(modifier = Modifier.alpha(settingsAlpha)) {
-              AudioSourceCard(
-                selectedAudio = uiState.settings.audioSource,
-                enabled = isIdle,
-                onSelectAudio = onSelectAudioSource,
-              )
-            }
+@Composable
+private fun SavedVideoQuickBanner(
+  visible: Boolean,
+  fileName: String?,
+  onOpenRecordings: () -> Unit,
+) {
+  AnimatedVisibility(visible = visible && fileName != null) {
+    if (fileName != null) {
+      Surface(
+        onClick = onOpenRecordings,
+        shape = RoundedCornerShape(14.dp),
+        color = LocalStudioColors.current.readyContainer,
+        modifier =
+          Modifier.fillMaxWidth()
+            .focusRing(RoundedCornerShape(14.dp))
+            .testTag("last_saved_banner"),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = "Saved to Movies/FrameCut",
+              style = MaterialTheme.typography.labelLarge,
+              color = LocalStudioColors.current.readyAccent,
+            )
+            Text(
+              text = fileName,
+              style = MaterialTheme.typography.bodyMedium,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+          Text(
+            text = stringResource(R.string.action_play),
+            style = MaterialTheme.typography.labelLarge,
+            color = LocalStudioColors.current.readyAccent,
+          )
+        }
+      }
+    }
+  }
+}
 
-            Box(modifier = Modifier.alpha(settingsAlpha)) {
-              VideoBitrateCard(
-                selectedBitrate = uiState.settings.videoBitrate,
-                enabled = isIdle,
-                onSelectBitrate = onSelectBitrate,
-              )
-            }
+@Composable
+private fun RecordingsLibraryButton(
+  count: Int,
+  onOpenRecordings: () -> Unit,
+) {
+  OutlinedButton(
+    onClick = onOpenRecordings,
+    modifier =
+      Modifier.fillMaxWidth()
+        .height(52.dp)
+        .focusRing(RoundedCornerShape(14.dp))
+        .testTag("open_recordings_button"),
+    shape = RoundedCornerShape(14.dp),
+  ) {
+    Icon(
+      imageVector = Icons.Default.VideoLibrary,
+      contentDescription = null,
+      modifier = Modifier.padding(end = 8.dp).size(18.dp),
+    )
+    Text(
+      text =
+        if (count == 0) stringResource(R.string.recordings_title)
+        else "${stringResource(R.string.recordings_title)} ($count)",
+    )
+  }
+}
 
-            RegionAnimationCard(
-              selectedAnimation = uiState.settings.regionAnimation,
-              enabled = true,
-              onSelect = onSelectRegionAnimation,
+@Composable
+private fun SettingsCardsSection(
+  uiState: RecorderUiState,
+  isIdle: Boolean,
+  settingsAlpha: Float,
+  twoColumns: Boolean,
+  onSelectMode: (RecordingMode) -> Unit,
+  onSelectOrientationMode: (OrientationMode) -> Unit,
+  onSelectAudioSource: (AudioSourceOption) -> Unit,
+  onSelectBitrate: (VideoBitrateOption) -> Unit,
+  onSelectRegionAnimation: (RegionAnimationOption) -> Unit,
+  onEditRegion: () -> Unit,
+  onRequestOverlayPermission: () -> Unit,
+) {
+  if (twoColumns) {
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+      ) {
+        Box(modifier = Modifier.alpha(settingsAlpha)) {
+          RecordingModeCard(
+            selectedMode = uiState.settings.recordingMode,
+            enabled = isIdle,
+            onSelectMode = onSelectMode,
+          )
+        }
+        if (uiState.settings.recordingMode == RecordingMode.REGION) {
+          Box(modifier = Modifier.alpha(settingsAlpha)) {
+            RegionPreviewCard(
+              uiState = uiState,
+              enabled = isIdle,
+              onEditRegion = onEditRegion,
+              onRequestOverlayPermission = onRequestOverlayPermission,
             )
           }
         }
-
-        // Recorded Videos library entry button at bottom for effortless access
-        OutlinedButton(
-          onClick = onOpenRecordings,
-          modifier = Modifier.fillMaxWidth().height(52.dp).testTag("open_recordings_button"),
-          shape = RoundedCornerShape(14.dp),
-        ) {
-          Icon(
-            imageVector = Icons.Default.VideoLibrary,
-            contentDescription = null,
-            modifier = Modifier.padding(end = 8.dp).size(18.dp),
-          )
-          Text(
-            text =
-              if (uiState.recordings.isEmpty()) stringResource(R.string.recordings_title)
-              else "${stringResource(R.string.recordings_title)} (${uiState.recordings.size})",
+        Box(modifier = Modifier.alpha(settingsAlpha)) {
+          OrientationModeCard(
+            selectedOrientation = uiState.settings.orientationMode,
+            enabled = isIdle,
+            onSelectOrientation = onSelectOrientationMode,
           )
         }
-
-        Spacer(modifier = Modifier.height(12.dp))
+        RegionAnimationCard(
+          selectedAnimation = uiState.settings.regionAnimation,
+          enabled = true,
+          onSelect = onSelectRegionAnimation,
+        )
       }
+      Column(
+        modifier = Modifier.weight(1f).alpha(settingsAlpha),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+      ) {
+        AudioSourceCard(
+          selectedAudio = uiState.settings.audioSource,
+          enabled = isIdle,
+          onSelectAudio = onSelectAudioSource,
+        )
+        VideoBitrateCard(
+          selectedBitrate = uiState.settings.videoBitrate,
+          enabled = isIdle,
+          onSelectBitrate = onSelectBitrate,
+        )
+      }
+    }
+  } else {
+    Column(
+      modifier = Modifier.fillMaxWidth(),
+      verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+      Box(modifier = Modifier.alpha(settingsAlpha)) {
+        RecordingModeCard(
+          selectedMode = uiState.settings.recordingMode,
+          enabled = isIdle,
+          onSelectMode = onSelectMode,
+        )
+      }
+
+      AnimatedVisibility(visible = uiState.settings.recordingMode == RecordingMode.REGION) {
+        Box(modifier = Modifier.alpha(settingsAlpha)) {
+          RegionPreviewCard(
+            uiState = uiState,
+            enabled = isIdle,
+            onEditRegion = onEditRegion,
+            onRequestOverlayPermission = onRequestOverlayPermission,
+          )
+        }
+      }
+
+      Box(modifier = Modifier.alpha(settingsAlpha)) {
+        OrientationModeCard(
+          selectedOrientation = uiState.settings.orientationMode,
+          enabled = isIdle,
+          onSelectOrientation = onSelectOrientationMode,
+        )
+      }
+
+      Box(modifier = Modifier.alpha(settingsAlpha)) {
+        AudioSourceCard(
+          selectedAudio = uiState.settings.audioSource,
+          enabled = isIdle,
+          onSelectAudio = onSelectAudioSource,
+        )
+      }
+
+      Box(modifier = Modifier.alpha(settingsAlpha)) {
+        VideoBitrateCard(
+          selectedBitrate = uiState.settings.videoBitrate,
+          enabled = isIdle,
+          onSelectBitrate = onSelectBitrate,
+        )
+      }
+
+      RegionAnimationCard(
+        selectedAnimation = uiState.settings.regionAnimation,
+        enabled = true,
+        onSelect = onSelectRegionAnimation,
+      )
     }
   }
 }
@@ -546,7 +700,10 @@ private fun RecordingConsoleCard(
           Button(
             onClick = onStartRecordClick,
             modifier =
-              Modifier.fillMaxWidth().height(56.dp).testTag("record_button"),
+              Modifier.fillMaxWidth()
+                .height(56.dp)
+                .focusRing(RoundedCornerShape(16.dp))
+                .testTag("record_button"),
             shape = RoundedCornerShape(16.dp),
             colors =
               ButtonDefaults.buttonColors(
@@ -575,7 +732,10 @@ private fun RecordingConsoleCard(
             FilledTonalButton(
               onClick = onPauseResumeClick,
               modifier =
-                Modifier.weight(1f).height(54.dp).testTag("pause_resume_button"),
+                Modifier.weight(1f)
+                  .height(54.dp)
+                  .focusRing(RoundedCornerShape(16.dp))
+                  .testTag("pause_resume_button"),
               shape = RoundedCornerShape(16.dp),
             ) {
               val isPaused = phase == RecordingPhase.PAUSED
@@ -595,7 +755,11 @@ private fun RecordingConsoleCard(
 
             Button(
               onClick = onStopClick,
-              modifier = Modifier.weight(1f).height(54.dp).testTag("stop_button"),
+              modifier =
+                Modifier.weight(1f)
+                  .height(54.dp)
+                  .focusRing(RoundedCornerShape(16.dp))
+                  .testTag("stop_button"),
               shape = RoundedCornerShape(16.dp),
               colors =
                 ButtonDefaults.buttonColors(
@@ -868,36 +1032,27 @@ private fun VideoBitrateCard(
     ) {
       VideoBitrateOption.entries.forEach { option ->
         val isSelected = option == selectedBitrate
+        val chipInteraction = remember { MutableInteractionSource() }
+        val chipFocused by chipInteraction.collectIsFocusedAsState()
         FilterChip(
           selected = isSelected,
           onClick = { onSelectBitrate(option) },
           enabled = enabled,
+          interactionSource = chipInteraction,
           label = { Text(option.label) },
-          modifier = Modifier.testTag("bitrate_${option.name.lowercase()}"),
+          modifier =
+            Modifier.minimumInteractiveComponentSize().testTag("bitrate_${option.name.lowercase()}"),
+          border =
+            if (chipFocused) {
+              BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+            } else {
+              FilterChipDefaults.filterChipBorder(enabled = enabled, selected = isSelected)
+            },
           colors =
             FilterChipDefaults.filterChipColors(
               selectedContainerColor = LocalStudioColors.current.recordContainer,
               selectedLabelColor = LocalStudioColors.current.recordAccent,
             ),
-        )
-      }
-    }
-
-    if (selectedBitrate == VideoBitrateOption.LOSSLESS) {
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.Info,
-          contentDescription = null,
-          modifier = Modifier.size(15.dp),
-          tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-          text = stringResource(R.string.bitrate_lossless_note),
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
     }
@@ -987,24 +1142,40 @@ private fun OptionTile(
   modifier: Modifier = Modifier,
 ) {
   val studioColors = LocalStudioColors.current
+  val interactionSource = remember { MutableInteractionSource() }
+  val isFocused by interactionSource.collectIsFocusedAsState()
+  val isHovered by interactionSource.collectIsHoveredAsState()
+
   val containerColor =
-    if (selected) studioColors.recordContainer
-    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+    when {
+      selected -> studioColors.recordContainer
+      isFocused || isHovered -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
+      else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+    }
   val borderColor =
-    if (selected) studioColors.recordAccent else MaterialTheme.colorScheme.outlineVariant
+    when {
+      isFocused -> MaterialTheme.colorScheme.primary
+      selected -> studioColors.recordAccent
+      isHovered -> MaterialTheme.colorScheme.outline
+      else -> MaterialTheme.colorScheme.outlineVariant
+    }
+  val borderWidth =
+    when {
+      isFocused -> 2.5.dp
+      selected -> 1.5.dp
+      else -> 1.dp
+    }
   val titleColor =
     if (selected) studioColors.recordAccent else MaterialTheme.colorScheme.onSurface
 
   Surface(
-    modifier =
-      modifier
-        .minimumInteractiveComponentSize()
-        .clip(RoundedCornerShape(14.dp))
-        .clickable(enabled = enabled, onClick = onClick)
-        .testTag(testTag),
+    onClick = onClick,
+    enabled = enabled,
+    interactionSource = interactionSource,
+    modifier = modifier.minimumInteractiveComponentSize().testTag(testTag),
     shape = RoundedCornerShape(14.dp),
     color = containerColor,
-    border = BorderStroke(if (selected) 1.5.dp else 1.dp, borderColor),
+    border = BorderStroke(borderWidth, borderColor),
   ) {
     Column(
       modifier = Modifier.padding(12.dp),
@@ -1038,6 +1209,17 @@ private fun OptionTile(
       )
     }
   }
+}
+
+@Composable
+private fun Modifier.focusRing(
+  shape: Shape = RoundedCornerShape(16.dp),
+  focusColor: Color = MaterialTheme.colorScheme.primary,
+): Modifier {
+  var isFocused by remember { mutableStateOf(false) }
+  return this.then(
+    if (isFocused) Modifier.border(2.5.dp, focusColor, shape) else Modifier,
+  ).onFocusChanged { isFocused = it.isFocused }
 }
 
 private fun formatElapsedTimer(elapsedMs: Long): String {

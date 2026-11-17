@@ -33,6 +33,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -41,8 +42,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -363,7 +367,10 @@ fun RegionSelectorOverlay(
                 selectedPreset = AspectPreset.FREE
                 draft = NormalizedRegion()
               },
-              modifier = Modifier.testTag("reset_region_button"),
+              modifier =
+                Modifier.minimumInteractiveComponentSize()
+                  .overlayFocusRing(CircleShape)
+                  .testTag("reset_region_button"),
             ) {
               Icon(
                 imageVector = Icons.Default.Refresh,
@@ -372,7 +379,10 @@ fun RegionSelectorOverlay(
             }
             IconButton(
               onClick = onCancel,
-              modifier = Modifier.testTag("cancel_region_button"),
+              modifier =
+                Modifier.minimumInteractiveComponentSize()
+                  .overlayFocusRing(CircleShape)
+                  .testTag("cancel_region_button"),
             ) {
               Icon(
                 imageVector = Icons.Default.Close,
@@ -401,6 +411,7 @@ fun RegionSelectorOverlay(
                     )
                 }
               },
+              modifier = Modifier.overlayFocusRing(RoundedCornerShape(8.dp)),
               label = { Text(preset.label, style = MaterialTheme.typography.labelSmall) },
             )
           }
@@ -408,7 +419,11 @@ fun RegionSelectorOverlay(
 
         Button(
           onClick = { onConfirm(draft.normalized()) },
-          modifier = Modifier.fillMaxWidth().testTag("confirm_region_button"),
+          modifier =
+            Modifier.fillMaxWidth()
+              .minimumInteractiveComponentSize()
+              .overlayFocusRing(CircleShape)
+              .testTag("confirm_region_button"),
           colors =
             ButtonDefaults.buttonColors(
               containerColor = studioColors.recordAccent,
@@ -425,6 +440,18 @@ fun RegionSelectorOverlay(
       }
     }
   }
+}
+
+private fun Modifier.overlayFocusRing(shape: Shape): Modifier = composed {
+  var isFocused by remember { mutableStateOf(false) }
+  this.onFocusChanged { isFocused = it.isFocused }
+    .then(
+      if (isFocused) {
+        Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
+      } else {
+        Modifier
+      },
+    )
 }
 
 @Composable

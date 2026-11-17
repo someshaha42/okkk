@@ -197,7 +197,8 @@ class ScreenCaptureManager(
       val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
       return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         val bounds = windowManager.maximumWindowMetrics.bounds
-        val dpi = context.resources.displayMetrics.densityDpi
+        val dpi =
+          context.resources.displayMetrics.densityDpi.coerceAtLeast(DisplayMetrics.DENSITY_MEDIUM)
         Triple(bounds.width().coerceAtLeast(128), bounds.height().coerceAtLeast(128), dpi)
       } else {
         val metrics = DisplayMetrics()
@@ -206,7 +207,7 @@ class ScreenCaptureManager(
         Triple(
           metrics.widthPixels.coerceAtLeast(128),
           metrics.heightPixels.coerceAtLeast(128),
-          metrics.densityDpi,
+          metrics.densityDpi.coerceAtLeast(DisplayMetrics.DENSITY_MEDIUM),
         )
       }
     }

@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
 import android.util.Log
+import androidx.compose.runtime.Immutable
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.MainActivity
@@ -57,6 +58,7 @@ enum class RecordingPhase {
   FINALIZING,
 }
 
+@Immutable
 data class RecordingSessionState(
   val phase: RecordingPhase = RecordingPhase.IDLE,
   val elapsedMillis: Long = 0L,
@@ -198,10 +200,10 @@ class RecordingService : Service() {
     val bitrate =
       runCatching {
           VideoBitrateOption.valueOf(
-            intent.getStringExtra(EXTRA_BITRATE) ?: VideoBitrateOption.LOSSLESS.name,
+            intent.getStringExtra(EXTRA_BITRATE) ?: VideoBitrateOption.MBPS_150.name,
           )
         }
-        .getOrDefault(VideoBitrateOption.LOSSLESS)
+        .getOrDefault(VideoBitrateOption.MBPS_150)
     val animation =
       runCatching {
           RegionAnimationOption.valueOf(
@@ -459,15 +461,20 @@ class RecordingService : Service() {
     timerJob?.cancel()
     timerJob =
       serviceScope.launch {
+        var lastEmittedSecond = -1L
         while (isActive) {
           val phase = RecordingSessionStore.state.value.phase
           if (phase == RecordingPhase.RECORDING) {
             val elapsed =
               (SystemClock.elapsedRealtime() - recordingStartElapsedMs - pausedAccumulatedMs)
                 .coerceAtLeast(0L)
-            RecordingSessionStore.update { it.copy(elapsedMillis = elapsed) }
+            val currentSecond = elapsed / 1000L
+            if (currentSecond != lastEmittedSecond) {
+              lastEmittedSecond = currentSecond
+              RecordingSessionStore.update { it.copy(elapsedMillis = elapsed) }
+            }
           }
-          delay(500L)
+          delay(250L)
         }
       }
   }

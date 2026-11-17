@@ -217,7 +217,7 @@ class VideoEncoder(
       }
     }
 
-    if (bitrateOption == VideoBitrateOption.LOSSLESS) {
+    if (bitrateOption.targetBitsPerSecond >= 200_000_000) {
       val matchedProfile =
         caps.profileLevels
           ?.filter { it.profile == MediaCodecInfo.CodecProfileLevel.HEVCProfileMain }
@@ -260,7 +260,7 @@ class VideoEncoder(
     fun selectBestEncoder(
       requestedWidth: Int,
       requestedHeight: Int,
-      bitrateOption: VideoBitrateOption = VideoBitrateOption.LOSSLESS,
+      bitrateOption: VideoBitrateOption = VideoBitrateOption.MBPS_150,
       availableCodecs: List<MediaCodecInfo> =
         MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.toList(),
       chipsetFamily: ChipsetFamily = detectChipsetFamily(),
@@ -327,28 +327,61 @@ class VideoEncoder(
       var alignedH = alignTo(requestedHeight.coerceAtLeast(128), hAlign)
 
       if (videoCaps != null) {
+        val maxSupportedW = videoCaps.supportedWidths.upper
+        val maxSupportedH = videoCaps.supportedHeights.upper
+        if (alignedW > maxSupportedW || alignedH > maxSupportedH) {
+          val clampScale = minOf(maxSupportedW.toFloat() / alignedW, maxSupportedH.toFloat() / alignedH)
+          alignedW = (alignedW * clampScale).toInt()
+          alignedH = (alignedH * clampScale).toInt()
+        }
         alignedW =
           alignedW.coerceIn(
             videoCaps.supportedWidths.lower,
-            videoCaps.supportedWidths.upper,
+            maxSupportedW,
           )
         alignedH =
           alignedH.coerceIn(
             videoCaps.supportedHeights.lower,
-            videoCaps.supportedHeights.upper,
+            maxSupportedH,
           )
         alignedW = alignTo(alignedW, wAlign)
         alignedH = alignTo(alignedH, hAlign)
+
+        // On 4K Android TVs or ultra-high-res tablets, step down proportionally if the hardware
+        // encoder cannot sustain 30 FPS at the full native pixel area.
+        val scales = floatArrayOf(0.85f, 0.75f, 0.667f, 0.5f, 0.375f)
+        val baseW = alignedW
+        val baseH = alignedH
+        var idx = 0
+        while (
+          idx < scales.size &&
+            !isSizeAndRateCompatible(
+              videoCaps,
+              alignedW,
+              alignedH,
+              InternalRecordingConfig.TARGET_FPS.toDouble(),
+            )
+        ) {
+          val factor = scales[idx++]
+          val candidateW =
+            alignTo((baseW * factor).toInt().coerceAtLeast(128), wAlign).coerceIn(
+              videoCaps.supportedWidths.lower,
+              videoCaps.supportedWidths.upper,
+            )
+          val candidateH =
+            alignTo((baseH * factor).toInt().coerceAtLeast(128), hAlign).coerceIn(
+              videoCaps.supportedHeights.lower,
+              videoCaps.supportedHeights.upper,
+            )
+          alignedW = alignTo(candidateW, wAlign)
+          alignedH = alignTo(candidateH, hAlign)
+        }
       }
 
       val effectiveBitrate =
         if (videoCaps != null) {
           val range = videoCaps.bitrateRange
-          if (bitrateOption == VideoBitrateOption.LOSSLESS) {
-            range.upper.coerceIn(range.lower, 250_000_000)
-          } else {
-            bitrateOption.targetBitsPerSecond.coerceIn(range.lower, range.upper)
-          }
+          bitrateOption.targetBitsPerSecond.coerceIn(range.lower, range.upper)
         } else {
           bitrateOption.targetBitsPerSecond
         }
@@ -384,6 +417,17 @@ class VideoEncoder(
       return MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.firstOrNull {
         it.name.equals(name, ignoreCase = true)
       }
+    }
+
+    private fun isSizeAndRateCompatible(
+      videoCaps: MediaCodecInfo.VideoCapabilities,
+      width: Int,
+      height: Int,
+      fps: Double,
+    ): Boolean {
+      if (!videoCaps.isSizeSupported(width, height)) return false
+      return runCatching { videoCaps.areSizeAndRateSupported(width, height, fps) }
+        .getOrDefault(true)
     }
 
     private fun alignTo(value: Int, alignment: Int): Int {

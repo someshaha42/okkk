@@ -1,13 +1,15 @@
 package com.example.region
 
 import android.graphics.Rect
+import androidx.compose.runtime.Immutable
 import com.example.settings.NormalizedRegion
 import com.example.settings.OrientationMode
 import kotlin.math.roundToInt
 
 /**
- * Pixel-exact crop rectangle aligned to even dimensions for H.264 YUV420 hardware encoders.
+ * Pixel-exact crop rectangle aligned to even dimensions for hardware YUV420 encoders.
  */
+@Immutable
 data class PixelRegion(
   val left: Int,
   val top: Int,

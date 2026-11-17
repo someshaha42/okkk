@@ -6,11 +6,13 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.compose.runtime.Immutable
 import androidx.core.content.FileProvider
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+@Immutable
 data class RecordedVideoItem(
   val id: Long,
   val uri: Uri,
