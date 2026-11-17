@@ -23,6 +23,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.audio.AudioCaptureManager
 import com.example.capture.ScreenCaptureManager
+import com.example.color.ColorPipelinePlanner
 import com.example.compat.PlatformCompat
 import com.example.encoder.EncoderSelection
 import com.example.encoder.VideoEncoder
@@ -303,9 +304,22 @@ class RecordingService : Service() {
       muxer.prepare()
       muxerManager = muxer
 
-      val encoder = VideoEncoder(targetW, targetH, settings.videoBitrate, muxer)
+      val displayColorProfile = ColorPipelinePlanner.detectDisplayColorProfile(this)
+      val encoder =
+        VideoEncoder(
+          requestedWidth = targetW,
+          requestedHeight = targetH,
+          bitrateOption = settings.videoBitrate,
+          muxerManager = muxer,
+          displayColorProfile = displayColorProfile,
+        )
       val selection: EncoderSelection = encoder.prepare()
       videoEncoder = encoder
+      Log.i(
+        TAG,
+        "Active color pipeline: ${selection.colorPlan.summaryLabel()}, " +
+          "display=${displayColorProfile.sourceColorSpace.label}, wcg=${displayColorProfile.isWideColorGamut}, hdr=${displayColorProfile.isHdr}",
+      )
 
       val audioMgr =
         AudioCaptureManager(
@@ -333,6 +347,7 @@ class RecordingService : Service() {
           outputWidth = selection.alignedWidth,
           outputHeight = selection.alignedHeight,
           cropRegion = pixelRegion,
+          colorPlan = selection.colorPlan,
           onProjectionStopped = { stopRecording() },
         )
       screenCaptureManager = captureMgr

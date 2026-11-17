@@ -2,8 +2,11 @@ package com.example.capture
 
 import android.content.Context
 import android.graphics.SurfaceTexture
+import android.hardware.DataSpace
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.MediaCodecInfo
+import android.media.MediaFormat
 import android.media.projection.MediaProjection
 import android.opengl.EGL14
 import android.opengl.EGLConfig
@@ -20,6 +23,13 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Display
 import android.view.Surface
+import com.example.color.ChromaSubsampling
+import com.example.color.ColorPipelinePlan
+import com.example.color.ColorPipelinePlanner
+import com.example.color.ColorRangeMode
+import com.example.color.FrameShaderColorPlan
+import com.example.color.PixelFormatMode
+import com.example.color.ShaderColorTransform
 import com.example.compat.PlatformCompat
 import com.example.region.PixelRegion
 import com.example.settings.InternalRecordingConfig
@@ -31,8 +41,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Manages MediaProjection, VirtualDisplay, dynamic display resize handling, and the OpenGL ES 2.0
- * GPU surface-to-surface pipeline for both Full Screen capture and pixel-exact Region cropping
+ * Manages MediaProjection, VirtualDisplay, dynamic display resize handling, and the OpenGL ES
+ * 2.0/3.0 GPU surface-to-surface pipeline for Full Screen capture and pixel-exact Region cropping
  * within the user's selected Portrait or Landscape orientation without CPU frame copies.
  */
 class ScreenCaptureManager(
@@ -42,6 +52,7 @@ class ScreenCaptureManager(
   private val outputWidth: Int,
   private val outputHeight: Int,
   private val cropRegion: PixelRegion?,
+  private val colorPlan: ColorPipelinePlan = DEFAULT_COLOR_PLAN,
   private val onProjectionStopped: () -> Unit,
 ) {
   private val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -117,6 +128,7 @@ class ScreenCaptureManager(
             initialCaptureWidth = w,
             initialCaptureHeight = h,
             cropRegion = cropRegion,
+            colorPlan = colorPlan,
           )
         pipeline.initGl()
         glPipeline = pipeline
@@ -196,6 +208,19 @@ class ScreenCaptureManager(
   companion object {
     private const val TAG = "ScreenCaptureManager"
 
+    val DEFAULT_COLOR_PLAN =
+      ColorPipelinePlan(
+        hevcProfile = MediaCodecInfo.CodecProfileLevel.HEVCProfileMain,
+        hevcLevel = null,
+        pixelFormatMode = PixelFormatMode.RGBA_8888,
+        expectedChroma = ChromaSubsampling.YUV_420,
+        colorStandard = MediaFormat.COLOR_STANDARD_BT709,
+        colorTransfer = MediaFormat.COLOR_TRANSFER_SDR_VIDEO,
+        colorRange = ColorRangeMode.LIMITED,
+        useDisplayP3PassthroughEgl = false,
+        useQpBounds = false,
+      )
+
     fun queryScreenMetrics(context: Context): Triple<Int, Int, Int> {
       return PlatformCompat.queryMaximumDisplayMetrics(context)
     }
@@ -203,9 +228,10 @@ class ScreenCaptureManager(
 }
 
 /**
- * Lightweight OpenGL ES 2.0 OES-to-RGBA surface pipeline. Renders VirtualDisplay frames directly on
- * GPU onto MediaCodec's input EGLSurface with exact region UV cropping, seamless encoder surface
- * swapping on rotation, and monotonic presentation timestamps across pause/resume.
+ * High-precision OpenGL ES 2.0/3.0 OES-to-RGBA surface pipeline. Supports 10-bit RGBA_1010102 and
+ * 8-bit RGBA_8888 EGL surfaces, Display P3 passthrough tagging, per-frame SurfaceTexture DataSpace
+ * colorimetry inspection with accurate linear gamut transforms, GL_NEAREST 1:1 unscaled sampling,
+ * and disabled dithering to preserve original screen colors cleanly.
  */
 private class GlVideoPipeline(
   private val encoderSurface: Surface,
@@ -214,6 +240,7 @@ private class GlVideoPipeline(
   initialCaptureWidth: Int,
   initialCaptureHeight: Int,
   private val cropRegion: PixelRegion?,
+  private val colorPlan: ColorPipelinePlan,
 ) : SurfaceTexture.OnFrameAvailableListener {
 
   private val minFrameIntervalNs =
@@ -229,6 +256,8 @@ private class GlVideoPipeline(
   private var positionHandle = 0
   private var texCoordHandle = 0
   private var texMatrixHandle = 0
+  private var transferModeHandle = 0
+  private var colorMatrixHandle = 0
 
   private var surfaceTexture: SurfaceTexture? = null
   var captureSurface: Surface? = null
@@ -236,6 +265,15 @@ private class GlVideoPipeline(
 
   private var captureWidth = initialCaptureWidth
   private var captureHeight = initialCaptureHeight
+  private var isUnscaledDimensions = false
+  private var currentTexFilter = GLES20.GL_LINEAR
+
+  private var lastFrameDataSpace = Int.MIN_VALUE
+  private var currentShaderPlan =
+    FrameShaderColorPlan(
+      ShaderColorTransform.PASSTHROUGH,
+      ColorPipelinePlanner.IDENTITY_MATRIX_COL_MAJOR,
+    )
 
   private val stMatrix = FloatArray(16)
   private val vertexBuffer: FloatBuffer =
@@ -255,41 +293,34 @@ private class GlVideoPipeline(
     val version = IntArray(2)
     check(EGL14.eglInitialize(eglDisplay, version, 0, version, 1)) { "Unable to initialize EGL14" }
 
-    val attribList =
-      intArrayOf(
-        EGL14.EGL_RED_SIZE, 8,
-        EGL14.EGL_GREEN_SIZE, 8,
-        EGL14.EGL_BLUE_SIZE, 8,
-        EGL14.EGL_ALPHA_SIZE, 8,
-        EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
-        EGL_RECORDABLE_ANDROID, 1,
-        EGL14.EGL_NONE,
-      )
-    val configs = arrayOfNulls<EGLConfig>(1)
-    val numConfigs = IntArray(1)
-    check(EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfigs, 0)) {
-      "Unable to find RGB888+recordable EGLConfig"
+    val initializedTenBit =
+      colorPlan.isTenBit &&
+        tryCreateEglContextAndSurface(
+          tenBit = true,
+          useP3Passthrough = colorPlan.useDisplayP3PassthroughEgl,
+        )
+
+    if (!initializedTenBit) {
+      if (colorPlan.isTenBit) {
+        Log.w(TAG, "10-bit EGL init failed on device GPU; falling back to 8-bit RGBA_8888")
+      }
+      val initializedEightBit =
+        tryCreateEglContextAndSurface(
+          tenBit = false,
+          useP3Passthrough = colorPlan.useDisplayP3PassthroughEgl,
+        )
+      check(initializedEightBit) { "Unable to initialize 8-bit RGBA_8888 EGL pipeline" }
     }
-    val config = configs[0] ?: throw IllegalStateException("Null EGLConfig")
 
-    val contextAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
-    eglContext =
-      EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
-    check(eglContext != EGL14.EGL_NO_CONTEXT) { "Failed to create EGLContext" }
-
-    val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
-    eglSurface =
-      EGL14.eglCreateWindowSurface(eglDisplay, config, encoderSurface, surfaceAttribs, 0)
-    check(eglSurface != EGL14.EGL_NO_SURFACE) { "Failed to create EGLWindowSurface" }
-
-    check(EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
-      "eglMakeCurrent failed"
-    }
+    // Disable 8-bit spatial dithering so gradients and flat UI colors stay faithful.
+    GLES20.glDisable(GLES20.GL_DITHER)
 
     programId = createProgram(VERTEX_SHADER, FRAGMENT_SHADER)
     positionHandle = GLES20.glGetAttribLocation(programId, "aPosition")
     texCoordHandle = GLES20.glGetAttribLocation(programId, "aTexCoord")
     texMatrixHandle = GLES20.glGetUniformLocation(programId, "uTexMatrix")
+    transferModeHandle = GLES20.glGetUniformLocation(programId, "uTransferMode")
+    colorMatrixHandle = GLES20.glGetUniformLocation(programId, "uColorMatrix")
 
     val textures = IntArray(1)
     GLES20.glGenTextures(1, textures, 0)
@@ -323,6 +354,95 @@ private class GlVideoPipeline(
       }
     captureSurface = Surface(surfaceTexture)
     recomputeGeometry()
+  }
+
+  private fun tryCreateEglContextAndSurface(tenBit: Boolean, useP3Passthrough: Boolean): Boolean {
+    val attribList =
+      if (tenBit) {
+        intArrayOf(
+          EGL14.EGL_RED_SIZE, 10,
+          EGL14.EGL_GREEN_SIZE, 10,
+          EGL14.EGL_BLUE_SIZE, 10,
+          EGL14.EGL_ALPHA_SIZE, 2,
+          EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR,
+          EGL_RECORDABLE_ANDROID, 1,
+          EGL14.EGL_NONE,
+        )
+      } else {
+        intArrayOf(
+          EGL14.EGL_RED_SIZE, 8,
+          EGL14.EGL_GREEN_SIZE, 8,
+          EGL14.EGL_BLUE_SIZE, 8,
+          EGL14.EGL_ALPHA_SIZE, 8,
+          EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
+          EGL_RECORDABLE_ANDROID, 1,
+          EGL14.EGL_NONE,
+        )
+      }
+
+    val configs = arrayOfNulls<EGLConfig>(1)
+    val numConfigs = IntArray(1)
+    if (
+      !EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfigs, 0) ||
+        numConfigs[0] <= 0 ||
+        configs[0] == null
+    ) {
+      return false
+    }
+    val config = configs[0]!!
+
+    val contextVersion = if (tenBit) 3 else 2
+    val contextAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, contextVersion, EGL14.EGL_NONE)
+    val ctx = EGL14.eglCreateContext(eglDisplay, config, EGL14.EGL_NO_CONTEXT, contextAttribs, 0)
+    if (ctx == EGL14.EGL_NO_CONTEXT) {
+      return false
+    }
+
+    var surface = EGL14.EGL_NO_SURFACE
+    if (useP3Passthrough) {
+      val p3SurfaceAttribs =
+        intArrayOf(
+          EGL_GL_COLORSPACE_KHR,
+          EGL_GL_COLORSPACE_DISPLAY_P3_PASSTHROUGH_EXT,
+          EGL14.EGL_NONE,
+        )
+      surface =
+        runCatching {
+            EGL14.eglCreateWindowSurface(eglDisplay, config, encoderSurface, p3SurfaceAttribs, 0)
+          }
+          .getOrDefault(EGL14.EGL_NO_SURFACE)
+    }
+
+    if (surface == EGL14.EGL_NO_SURFACE) {
+      val standardSurfaceAttribs = intArrayOf(EGL14.EGL_NONE)
+      surface =
+        runCatching {
+            EGL14.eglCreateWindowSurface(
+              eglDisplay,
+              config,
+              encoderSurface,
+              standardSurfaceAttribs,
+              0,
+            )
+          }
+          .getOrDefault(EGL14.EGL_NO_SURFACE)
+    }
+
+    if (surface == EGL14.EGL_NO_SURFACE || !EGL14.eglMakeCurrent(eglDisplay, surface, surface, ctx)) {
+      if (surface != EGL14.EGL_NO_SURFACE) {
+        EGL14.eglDestroySurface(eglDisplay, surface)
+      }
+      EGL14.eglDestroyContext(eglDisplay, ctx)
+      return false
+    }
+
+    eglContext = ctx
+    eglSurface = surface
+    Log.i(
+      TAG,
+      "EGL initialized: esVersion=$contextVersion, tenBit=$tenBit, p3Passthrough=$useP3Passthrough",
+    )
+    return true
   }
 
   fun setPaused(paused: Boolean) {
@@ -372,12 +492,18 @@ private class GlVideoPipeline(
           xScale = captureAspect / outputAspect
         }
       }
+      isUnscaledDimensions =
+        captureWidth == outputWidth &&
+          captureHeight == outputHeight &&
+          kotlin.math.abs(xScale - 1f) < 0.001f &&
+          kotlin.math.abs(yScale - 1f) < 0.001f
     } else {
       if (captureWidth == cropRegion.screenWidth && captureHeight == cropRegion.screenHeight) {
         sLeft = cropRegion.left.toFloat() / captureWidth.toFloat()
         sRight = cropRegion.right.toFloat() / captureWidth.toFloat()
         tTop = 1f - (cropRegion.top.toFloat() / captureHeight.toFloat())
         tBottom = 1f - (cropRegion.bottom.toFloat() / captureHeight.toFloat())
+        isUnscaledDimensions = cropRegion.width == outputWidth && cropRegion.height == outputHeight
       } else {
         // Orientation changed during region capture: keep proportional crop inside current capture
         val normLeft = cropRegion.left.toFloat() / cropRegion.screenWidth.toFloat()
@@ -397,6 +523,7 @@ private class GlVideoPipeline(
           if (cropAspect > outAspect) yScale = outAspect / cropAspect
           else xScale = cropAspect / outAspect
         }
+        isUnscaledDimensions = false
       }
     }
 
@@ -441,6 +568,18 @@ private class GlVideoPipeline(
       }
       lastSubmittedPtsNs = ptsNs
 
+      val frameDataSpace = runCatching { st.dataSpace }.getOrDefault(DataSpace.DATASPACE_UNKNOWN)
+      if (frameDataSpace != lastFrameDataSpace) {
+        lastFrameDataSpace = frameDataSpace
+        currentShaderPlan = ColorPipelinePlanner.resolveFrameShaderColorPlan(frameDataSpace, colorPlan)
+      }
+
+      val isAxisAligned1To1 =
+        isUnscaledDimensions &&
+          kotlin.math.abs(stMatrix[0]) > 0.999f &&
+          kotlin.math.abs(stMatrix[5]) > 0.999f
+      val desiredFilter = if (isAxisAligned1To1) GLES20.GL_NEAREST else GLES20.GL_LINEAR
+
       GLES20.glViewport(0, 0, outputWidth, outputHeight)
       GLES20.glClearColor(0f, 0f, 0f, 1f)
       GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
@@ -449,6 +588,20 @@ private class GlVideoPipeline(
       GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
       GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId)
 
+      if (desiredFilter != currentTexFilter) {
+        GLES20.glTexParameteri(
+          GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+          GLES20.GL_TEXTURE_MIN_FILTER,
+          desiredFilter,
+        )
+        GLES20.glTexParameteri(
+          GLES11Ext.GL_TEXTURE_EXTERNAL_OES,
+          GLES20.GL_TEXTURE_MAG_FILTER,
+          desiredFilter,
+        )
+        currentTexFilter = desiredFilter
+      }
+
       GLES20.glEnableVertexAttribArray(positionHandle)
       GLES20.glVertexAttribPointer(positionHandle, 2, GLES20.GL_FLOAT, false, 0, vertexBuffer)
 
@@ -456,6 +609,15 @@ private class GlVideoPipeline(
       GLES20.glVertexAttribPointer(texCoordHandle, 2, GLES20.GL_FLOAT, false, 0, texCoordBuffer)
 
       GLES20.glUniformMatrix4fv(texMatrixHandle, 1, false, stMatrix, 0)
+      GLES20.glUniform1i(transferModeHandle, currentShaderPlan.transformMode.modeInt)
+      GLES20.glUniformMatrix3fv(
+        colorMatrixHandle,
+        1,
+        false,
+        currentShaderPlan.columnMajorMatrix,
+        0,
+      )
+
       GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
       GLES20.glDisableVertexAttribArray(positionHandle)
@@ -532,6 +694,8 @@ private class GlVideoPipeline(
   companion object {
     private const val TAG = "GlVideoPipeline"
     private const val EGL_RECORDABLE_ANDROID = 0x3142
+    private const val EGL_GL_COLORSPACE_KHR = 0x309D
+    private const val EGL_GL_COLORSPACE_DISPLAY_P3_PASSTHROUGH_EXT = 0x3490
 
     private const val VERTEX_SHADER =
       """
@@ -548,11 +712,51 @@ private class GlVideoPipeline(
     private const val FRAGMENT_SHADER =
       """
       #extension GL_OES_EGL_image_external : require
-      precision mediump float;
+      precision highp float;
       varying vec2 vTexCoord;
       uniform samplerExternalOES sTexture;
+      uniform int uTransferMode;
+      uniform mat3 uColorMatrix;
+
+      vec3 srgbToLinear(vec3 c) {
+        vec3 clamped = max(c, vec3(0.0));
+        vec3 low = clamped / 12.92;
+        vec3 high = pow((clamped + 0.055) / 1.055, vec3(2.4));
+        vec3 mask = step(vec3(0.04045), clamped);
+        return mix(low, high, mask);
+      }
+
+      vec3 linearToSrgb(vec3 c) {
+        vec3 clamped = clamp(c, 0.0, 1.0);
+        vec3 low = clamped * 12.92;
+        vec3 safeBase = max(clamped, vec3(0.0031308));
+        vec3 high = 1.055 * pow(safeBase, vec3(1.0 / 2.4)) - 0.055;
+        vec3 mask = step(vec3(0.0031308), clamped);
+        return mix(low, high, mask);
+      }
+
+      vec3 hdrToSdrLinear(vec3 c) {
+        vec3 clamped = clamp(c, 0.0, 1.0);
+        vec3 lin = pow(max(clamped, vec3(0.0001)), vec3(2.2));
+        vec3 gamuted = max(uColorMatrix * lin, vec3(0.0));
+        float luma = dot(gamuted, vec3(0.2126, 0.7152, 0.0722));
+        float compressed = luma / (1.0 + luma * 0.35);
+        float scale = luma > 0.0001 ? (compressed / luma) : 1.0;
+        return clamp(gamuted * scale, 0.0, 1.0);
+      }
+
       void main() {
-        gl_FragColor = texture2D(sTexture, vTexCoord);
+        vec4 texel = texture2D(sTexture, vTexCoord);
+        if (uTransferMode == 0) {
+          gl_FragColor = texel;
+        } else if (uTransferMode == 1) {
+          vec3 lin = srgbToLinear(texel.rgb);
+          vec3 converted = clamp(uColorMatrix * lin, 0.0, 1.0);
+          gl_FragColor = vec4(linearToSrgb(converted), texel.a);
+        } else {
+          vec3 sdrLin = hdrToSdrLinear(texel.rgb);
+          gl_FragColor = vec4(linearToSrgb(sdrLin), texel.a);
+        }
       }
       """
   }
