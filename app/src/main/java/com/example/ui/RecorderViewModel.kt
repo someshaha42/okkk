@@ -135,9 +135,17 @@ class RecorderViewModel(application: Application) : AndroidViewModel(application
     viewModelScope.launch { settingsRepo.setVideoBitrate(bitrate) }
   }
 
+  @Volatile private var latestRegionAnimationOverride: RegionAnimationOption? = null
+
   fun setRegionAnimation(option: RegionAnimationOption) {
-    if (uiState.value.session.phase != RecordingPhase.IDLE) return
+    latestRegionAnimationOverride = option
     viewModelScope.launch { settingsRepo.setRegionAnimation(option) }
+    val phase = uiState.value.session.phase
+    if (phase == RecordingPhase.RECORDING || phase == RecordingPhase.PAUSED) {
+      runCatching {
+        appContext.startService(RecordingService.setRegionAnimationIntent(appContext, option))
+      }
+    }
   }
 
   fun openRegionEditor() {
@@ -162,7 +170,9 @@ class RecorderViewModel(application: Application) : AndroidViewModel(application
   }
 
   fun startRecording(resultCode: Int, resultData: Intent) {
-    val currentSettings = uiState.value.settings
+    val baseSettings = uiState.value.settings
+    val effectiveAnimation = latestRegionAnimationOverride ?: baseSettings.regionAnimation
+    val currentSettings = baseSettings.copy(regionAnimation = effectiveAnimation)
     val intent =
       RecordingService.startRecordingIntent(
         context = appContext,
@@ -181,18 +191,24 @@ class RecorderViewModel(application: Application) : AndroidViewModel(application
         RecordingPhase.PAUSED -> RecordingService.resumeIntent(appContext)
         else -> return
       }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      ContextCompat.startForegroundService(appContext, intent)
-    } else {
-      appContext.startService(intent)
-    }
+    runCatching { appContext.startService(intent) }
+      .onFailure {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          runCatching { ContextCompat.startForegroundService(appContext, intent) }
+        }
+      }
   }
 
   fun stopRecording() {
     val phase = uiState.value.session.phase
     if (phase != RecordingPhase.RECORDING && phase != RecordingPhase.PAUSED) return
     val intent = RecordingService.stopIntent(appContext)
-    appContext.startService(intent)
+    runCatching { appContext.startService(intent) }
+      .onFailure {
+        RecordingSessionStore.update {
+          it.copy(phase = RecordingPhase.IDLE, elapsedMillis = 0L, showRegionBorder = false)
+        }
+      }
   }
 
   fun clearMessages() {

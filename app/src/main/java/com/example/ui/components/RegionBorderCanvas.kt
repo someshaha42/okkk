@@ -21,8 +21,8 @@ import androidx.compose.ui.unit.dp
 import com.example.ui.theme.LocalStudioColors
 
 /**
- * Lightweight GPU-friendly deep red animated dashed border. When [animate] is false, no infinite
- * transition is created or ticked, keeping GPU and battery overhead at zero.
+ * Lightweight GPU-friendly deep red animated dashed border. When [showBorder] or [animate] is
+ * false, no infinite transition is created or ticked, keeping GPU and battery overhead at zero.
  */
 @Composable
 fun RegionBorderOverlayCanvas(
@@ -35,12 +35,14 @@ fun RegionBorderOverlayCanvas(
   modifier: Modifier = Modifier,
   strokeWidth: Dp = 2.5.dp,
   scrimColor: Color = Color.Transparent,
+  neutralGuideColor: Color = Color.Transparent,
 ) {
   val studioColors = LocalStudioColors.current
   val density = LocalDensity.current
   val dashPx = with(density) { 12.dp.toPx() }
   val gapPx = with(density) { 8.dp.toPx() }
   val strokePx = with(density) { strokeWidth.toPx() }
+  val neutralStrokePx = with(density) { 1.5.dp.toPx() }
 
   val phase =
     if (showBorder && animate) {
@@ -87,12 +89,11 @@ fun RegionBorderOverlayCanvas(
       )
     }
 
-    if (showBorder) {
-      val rectTopLeft = Offset(l, t)
-      val rectSize = Size((r - l).coerceAtLeast(1f), (b - t).coerceAtLeast(1f))
-      val effect =
-        if (animate) PathEffect.dashPathEffect(floatArrayOf(dashPx, gapPx), phase) else null
+    val rectTopLeft = Offset(l, t)
+    val rectSize = Size((r - l).coerceAtLeast(1f), (b - t).coerceAtLeast(1f))
 
+    if (showBorder) {
+      val effect = PathEffect.dashPathEffect(floatArrayOf(dashPx, gapPx), phase)
       drawRect(
         color = Color.Black.copy(alpha = 0.35f),
         topLeft = rectTopLeft,
@@ -104,6 +105,13 @@ fun RegionBorderOverlayCanvas(
         topLeft = rectTopLeft,
         size = rectSize,
         style = Stroke(width = strokePx, pathEffect = effect),
+      )
+    } else if (neutralGuideColor != Color.Transparent) {
+      drawRect(
+        color = neutralGuideColor,
+        topLeft = rectTopLeft,
+        size = rectSize,
+        style = Stroke(width = neutralStrokePx),
       )
     }
   }

@@ -255,34 +255,38 @@ fun MainScreen(
         // Settings cards (2-column on wide screens, 1-column on phones)
         if (isWide) {
           Row(
-            modifier = Modifier.fillMaxWidth().alpha(settingsAlpha),
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
           ) {
             Column(
               modifier = Modifier.weight(1f),
               verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-              RecordingModeCard(
-                selectedMode = uiState.settings.recordingMode,
-                enabled = isIdle,
-                onSelectMode = onSelectMode,
-              )
-              if (uiState.settings.recordingMode == RecordingMode.REGION) {
-                RegionPreviewCard(
-                  uiState = uiState,
+              Box(modifier = Modifier.alpha(settingsAlpha)) {
+                RecordingModeCard(
+                  selectedMode = uiState.settings.recordingMode,
                   enabled = isIdle,
-                  onEditRegion = onEditRegion,
-                  onRequestOverlayPermission = onRequestOverlayPermission,
+                  onSelectMode = onSelectMode,
                 )
+              }
+              if (uiState.settings.recordingMode == RecordingMode.REGION) {
+                Box(modifier = Modifier.alpha(settingsAlpha)) {
+                  RegionPreviewCard(
+                    uiState = uiState,
+                    enabled = isIdle,
+                    onEditRegion = onEditRegion,
+                    onRequestOverlayPermission = onRequestOverlayPermission,
+                  )
+                }
               }
               RegionAnimationCard(
                 selectedAnimation = uiState.settings.regionAnimation,
-                enabled = isIdle,
+                enabled = true,
                 onSelect = onSelectRegionAnimation,
               )
             }
             Column(
-              modifier = Modifier.weight(1f),
+              modifier = Modifier.weight(1f).alpha(settingsAlpha),
               verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
               AudioSourceCard(
@@ -299,39 +303,47 @@ fun MainScreen(
           }
         } else {
           Column(
-            modifier = Modifier.fillMaxWidth().alpha(settingsAlpha),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(14.dp),
           ) {
-            RecordingModeCard(
-              selectedMode = uiState.settings.recordingMode,
-              enabled = isIdle,
-              onSelectMode = onSelectMode,
-            )
-
-            AnimatedVisibility(visible = uiState.settings.recordingMode == RecordingMode.REGION) {
-              RegionPreviewCard(
-                uiState = uiState,
+            Box(modifier = Modifier.alpha(settingsAlpha)) {
+              RecordingModeCard(
+                selectedMode = uiState.settings.recordingMode,
                 enabled = isIdle,
-                onEditRegion = onEditRegion,
-                onRequestOverlayPermission = onRequestOverlayPermission,
+                onSelectMode = onSelectMode,
               )
             }
 
-            AudioSourceCard(
-              selectedAudio = uiState.settings.audioSource,
-              enabled = isIdle,
-              onSelectAudio = onSelectAudioSource,
-            )
+            AnimatedVisibility(visible = uiState.settings.recordingMode == RecordingMode.REGION) {
+              Box(modifier = Modifier.alpha(settingsAlpha)) {
+                RegionPreviewCard(
+                  uiState = uiState,
+                  enabled = isIdle,
+                  onEditRegion = onEditRegion,
+                  onRequestOverlayPermission = onRequestOverlayPermission,
+                )
+              }
+            }
 
-            VideoBitrateCard(
-              selectedBitrate = uiState.settings.videoBitrate,
-              enabled = isIdle,
-              onSelectBitrate = onSelectBitrate,
-            )
+            Box(modifier = Modifier.alpha(settingsAlpha)) {
+              AudioSourceCard(
+                selectedAudio = uiState.settings.audioSource,
+                enabled = isIdle,
+                onSelectAudio = onSelectAudioSource,
+              )
+            }
+
+            Box(modifier = Modifier.alpha(settingsAlpha)) {
+              VideoBitrateCard(
+                selectedBitrate = uiState.settings.videoBitrate,
+                enabled = isIdle,
+                onSelectBitrate = onSelectBitrate,
+              )
+            }
 
             RegionAnimationCard(
               selectedAnimation = uiState.settings.regionAnimation,
-              enabled = isIdle,
+              enabled = true,
               onSelect = onSelectRegionAnimation,
             )
           }
@@ -641,6 +653,7 @@ private fun RegionPreviewCard(
     (uiState.screenWidthPx.toFloat() / uiState.screenHeightPx.toFloat().coerceAtLeast(1f))
       .coerceIn(0.35f, 2.2f)
   val showAnim = uiState.settings.regionAnimation == RegionAnimationOption.SHOW
+  val isRecordingActive = uiState.session.phase == RecordingPhase.RECORDING
 
   SettingsSectionCard(
     title = stringResource(R.string.section_region_preview),
@@ -664,9 +677,10 @@ private fun RegionPreviewCard(
           topFraction = norm.top,
           rightFraction = norm.right,
           bottomFraction = norm.bottom,
-          animate = showAnim,
-          showBorder = true,
+          animate = showAnim && isRecordingActive,
+          showBorder = showAnim,
           scrimColor = Color.Black.copy(alpha = 0.35f),
+          neutralGuideColor = MaterialTheme.colorScheme.outline,
           strokeWidth = 2.dp,
           modifier = Modifier.fillMaxSize(),
         )

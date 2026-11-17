@@ -112,14 +112,16 @@ fun RegionSelectorOverlay(
         }
       },
   ) {
+    val showRedBorder = regionAnimation == RegionAnimationOption.SHOW
     RegionBorderOverlayCanvas(
       leftFraction = draft.left,
       topFraction = draft.top,
       rightFraction = draft.right,
       bottomFraction = draft.bottom,
-      animate = regionAnimation == RegionAnimationOption.SHOW,
-      showBorder = true,
+      animate = showRedBorder,
+      showBorder = showRedBorder,
       scrimColor = Color.Black.copy(alpha = 0.58f),
+      neutralGuideColor = Color.White.copy(alpha = 0.78f),
       strokeWidth = 3.dp,
       modifier = Modifier.fillMaxSize(),
     )

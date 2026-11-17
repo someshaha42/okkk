@@ -119,8 +119,42 @@ class RecordingService : Service() {
       ACTION_PAUSE -> pauseRecording()
       ACTION_RESUME -> resumeRecording()
       ACTION_STOP -> stopRecording()
+      ACTION_SET_REGION_ANIMATION -> handleRegionAnimationChange(intent)
     }
     return START_NOT_STICKY
+  }
+
+  private fun handleRegionAnimationChange(intent: Intent) {
+    val animation =
+      runCatching {
+          RegionAnimationOption.valueOf(
+            intent.getStringExtra(EXTRA_REGION_ANIMATION) ?: RegionAnimationOption.SHOW.name,
+          )
+        }
+        .getOrDefault(RegionAnimationOption.SHOW)
+
+    val current = RecordingSessionStore.state.value
+    val isActiveSession =
+      current.phase == RecordingPhase.RECORDING || current.phase == RecordingPhase.PAUSED
+    if (!isActiveSession) {
+      overlayManager?.hide()
+      return
+    }
+
+    val shouldShow =
+      current.activeMode == RecordingMode.REGION &&
+        animation == RegionAnimationOption.SHOW &&
+        current.activeRegion != null
+
+    if (shouldShow) {
+      overlayManager?.show(current.activeRegion!!, enabled = true)
+      if (current.phase == RecordingPhase.PAUSED) {
+        overlayManager?.setPaused(true)
+      }
+    } else {
+      overlayManager?.hide()
+    }
+    RecordingSessionStore.update { it.copy(showRegionBorder = shouldShow) }
   }
 
   private fun handleStartAction(intent: Intent) {
@@ -287,6 +321,8 @@ class RecordingService : Service() {
           settings.regionAnimation == RegionAnimationOption.SHOW
       if (pixelRegion != null && showBorder) {
         overlayManager?.show(pixelRegion, enabled = true)
+      } else {
+        overlayManager?.hide()
       }
 
       recordingStartElapsedMs = SystemClock.elapsedRealtime()
@@ -352,11 +388,17 @@ class RecordingService : Service() {
 
   private fun stopRecording() {
     val currentPhase = RecordingSessionStore.state.value.phase
-    if (currentPhase == RecordingPhase.IDLE || currentPhase == RecordingPhase.FINALIZING) return
+    if (currentPhase == RecordingPhase.IDLE || currentPhase == RecordingPhase.FINALIZING) {
+      overlayManager?.hide()
+      return
+    }
 
     timerJob?.cancel()
     timerJob = null
-    RecordingSessionStore.update { it.copy(phase = RecordingPhase.FINALIZING) }
+    overlayManager?.hide()
+    RecordingSessionStore.update {
+      it.copy(phase = RecordingPhase.FINALIZING, showRegionBorder = false)
+    }
 
     serviceScope.launch(Dispatchers.IO) {
       val savedOutput = releaseAllEngineResources()
@@ -364,6 +406,7 @@ class RecordingService : Service() {
         prev.copy(
           phase = RecordingPhase.IDLE,
           elapsedMillis = 0L,
+          activeRegion = null,
           showRegionBorder = false,
           lastSavedUri = savedOutput?.uri ?: prev.lastSavedUri,
           lastSavedName = savedOutput?.displayName ?: prev.lastSavedName,
@@ -372,27 +415,34 @@ class RecordingService : Service() {
             else prev.errorMessage,
         )
       }
-      stopForeground(STOP_FOREGROUND_REMOVE)
+      runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+      runCatching {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancel(NOTIFICATION_ID)
+      }
       stopSelf()
     }
   }
 
   private fun releaseAllEngineResources() =
-    try {
+    run {
       overlayManager?.hide()
-      screenCaptureManager?.stopAndRelease()
+      runCatching { screenCaptureManager?.stopAndRelease() }
+        .onFailure { Log.e(TAG, "Error stopping ScreenCaptureManager", it) }
       screenCaptureManager = null
 
-      audioCaptureManager?.stopAndRelease()
+      runCatching { audioCaptureManager?.stopAndRelease() }
+        .onFailure { Log.e(TAG, "Error stopping AudioCaptureManager", it) }
       audioCaptureManager = null
 
-      videoEncoder?.stopAndRelease()
+      runCatching { videoEncoder?.stopAndRelease() }
+        .onFailure { Log.e(TAG, "Error stopping VideoEncoder", it) }
       videoEncoder = null
 
-      muxerManager?.finishAndRelease().also { muxerManager = null }
-    } catch (e: Exception) {
-      Log.e(TAG, "Error releasing recording resources", e)
-      null
+      runCatching { muxerManager?.finishAndRelease() }
+        .onFailure { Log.e(TAG, "Error finalizing MediaMuxerManager", it) }
+        .getOrNull()
+        .also { muxerManager = null }
     }
 
   private fun startTimerLoop() {
@@ -529,6 +579,7 @@ class RecordingService : Service() {
     const val ACTION_PAUSE = "com.example.service.ACTION_PAUSE"
     const val ACTION_RESUME = "com.example.service.ACTION_RESUME"
     const val ACTION_STOP = "com.example.service.ACTION_STOP"
+    const val ACTION_SET_REGION_ANIMATION = "com.example.service.ACTION_SET_REGION_ANIMATION"
 
     const val EXTRA_RESULT_CODE = "extra_result_code"
     const val EXTRA_RESULT_DATA = "extra_result_data"
@@ -570,5 +621,14 @@ class RecordingService : Service() {
 
     fun stopIntent(context: Context): Intent =
       Intent(context, RecordingService::class.java).apply { action = ACTION_STOP }
+
+    fun setRegionAnimationIntent(
+      context: Context,
+      animation: RegionAnimationOption,
+    ): Intent =
+      Intent(context, RecordingService::class.java).apply {
+        action = ACTION_SET_REGION_ANIMATION
+        putExtra(EXTRA_REGION_ANIMATION, animation.name)
+      }
   }
 }

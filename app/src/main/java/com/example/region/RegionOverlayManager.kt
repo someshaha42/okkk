@@ -9,78 +9,106 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.LinearInterpolator
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Optional floating region indicator overlay. When RegionAnimationOption.SHOW is enabled AND the
  * user has granted Display Over Other Apps permission, attaches a non-touchable animated deep-red
- * dashed border strictly outside the crop rectangle. When overlay permission is unavailable or
- * animation is set to HIDE, this manager gracefully no-ops so recording never blocks.
+ * dashed border strictly outside the crop rectangle. All WindowManager and ValueAnimator calls are
+ * strictly marshaled onto the Main Looper thread so hide() never fails from background threads.
  */
 class RegionOverlayManager(private val context: Context) {
 
   private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private val generation = AtomicLong(0L)
   private var overlayView: RegionBorderOverlayView? = null
 
   fun canDrawOverlay(): Boolean = Settings.canDrawOverlays(context)
 
   fun show(region: PixelRegion, enabled: Boolean) {
-    hide()
-    if (!enabled) return
-    if (!canDrawOverlay()) {
-      Log.d(TAG, "Overlay permission unavailable; continuing region recording without floating border")
-      return
-    }
-
-    val view = RegionBorderOverlayView(context, region)
-    val windowType =
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-      } else {
-        @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+    val token = generation.incrementAndGet()
+    runOnMainThread {
+      if (generation.get() != token) return@runOnMainThread
+      hideInternal()
+      if (!enabled) return@runOnMainThread
+      if (!canDrawOverlay()) {
+        Log.d(TAG, "Overlay permission unavailable; continuing region recording without floating border")
+        return@runOnMainThread
       }
 
-    val params =
-      WindowManager.LayoutParams(
-          WindowManager.LayoutParams.MATCH_PARENT,
-          WindowManager.LayoutParams.MATCH_PARENT,
-          windowType,
-          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-          PixelFormat.TRANSLUCENT,
-        )
-        .apply {
-          gravity = Gravity.TOP or Gravity.START
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            layoutInDisplayCutoutMode =
-              WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-          }
+      val view = RegionBorderOverlayView(context, region)
+      val windowType =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+          @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
         }
 
-    runCatching {
-        windowManager.addView(view, params)
-        overlayView = view
-        view.startAnimation()
-      }
-      .onFailure { Log.w(TAG, "Unable to attach region overlay; continuing without border", it) }
+      val params =
+        WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            windowType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+              WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+              WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+              WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+          )
+          .apply {
+            gravity = Gravity.TOP or Gravity.START
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+              layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+          }
+
+      runCatching {
+          windowManager.addView(view, params)
+          overlayView = view
+          view.startAnimation()
+        }
+        .onFailure {
+          Log.w(TAG, "Unable to attach region overlay; continuing without border", it)
+          view.stopAnimation()
+          overlayView = null
+        }
+    }
   }
 
   fun setPaused(paused: Boolean) {
-    overlayView?.setPaused(paused)
+    runOnMainThread { overlayView?.setPaused(paused) }
   }
 
   fun hide() {
+    generation.incrementAndGet()
+    runOnMainThread { hideInternal() }
+  }
+
+  private fun hideInternal() {
     val view = overlayView ?: return
     overlayView = null
-    view.stopAnimation()
+    runCatching { view.stopAnimation() }
+    view.visibility = View.GONE
     runCatching { windowManager.removeViewImmediate(view) }
+      .onFailure { runCatching { windowManager.removeView(view) } }
+  }
+
+  private fun runOnMainThread(block: () -> Unit) {
+    if (Looper.myLooper() == Looper.getMainLooper()) {
+      block()
+    } else {
+      mainHandler.post(block)
+    }
   }
 
   companion object {
