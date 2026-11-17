@@ -2,6 +2,7 @@ package com.example.region
 
 import android.graphics.Rect
 import com.example.settings.NormalizedRegion
+import com.example.settings.OrientationMode
 import kotlin.math.roundToInt
 
 /**
@@ -32,10 +33,18 @@ object RegionSelectionManager {
 
   private const val MIN_PIXEL_SPAN = 128
 
-  fun resolveFullScreenDimensions(rawWidth: Int, rawHeight: Int): Pair<Int, Int> {
+  fun resolveFullScreenDimensions(
+    rawWidth: Int,
+    rawHeight: Int,
+    orientationMode: OrientationMode = OrientationMode.NATIVE,
+  ): Pair<Int, Int> {
     val evenW = alignEven(rawWidth.coerceAtLeast(128))
     val evenH = alignEven(rawHeight.coerceAtLeast(128))
-    return evenW to evenH
+    return when (orientationMode) {
+      OrientationMode.NATIVE -> evenW to evenH
+      OrientationMode.LANDSCAPE_FIXED -> maxOf(evenW, evenH) to minOf(evenW, evenH)
+      OrientationMode.PORTRAIT_FIXED -> minOf(evenW, evenH) to maxOf(evenW, evenH)
+    }
   }
 
   fun toPixelRegion(

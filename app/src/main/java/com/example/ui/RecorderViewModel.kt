@@ -18,6 +18,7 @@ import com.example.service.RecordingSessionState
 import com.example.service.RecordingSessionStore
 import com.example.settings.AudioSourceOption
 import com.example.settings.NormalizedRegion
+import com.example.settings.OrientationMode
 import com.example.settings.RecordingMode
 import com.example.settings.RecordingSettings
 import com.example.settings.RecordingSettingsRepository
@@ -125,6 +126,14 @@ class RecorderViewModel(application: Application) : AndroidViewModel(application
     viewModelScope.launch { settingsRepo.setRecordingMode(mode) }
   }
 
+  @Volatile private var latestOrientationModeOverride: OrientationMode? = null
+
+  fun setOrientationMode(mode: OrientationMode) {
+    if (uiState.value.session.phase != RecordingPhase.IDLE) return
+    latestOrientationModeOverride = mode
+    viewModelScope.launch { settingsRepo.setOrientationMode(mode) }
+  }
+
   fun setAudioSource(source: AudioSourceOption) {
     if (uiState.value.session.phase != RecordingPhase.IDLE) return
     viewModelScope.launch { settingsRepo.setAudioSource(source) }
@@ -171,8 +180,13 @@ class RecorderViewModel(application: Application) : AndroidViewModel(application
 
   fun startRecording(resultCode: Int, resultData: Intent) {
     val baseSettings = uiState.value.settings
+    val effectiveOrientation = latestOrientationModeOverride ?: baseSettings.orientationMode
     val effectiveAnimation = latestRegionAnimationOverride ?: baseSettings.regionAnimation
-    val currentSettings = baseSettings.copy(regionAnimation = effectiveAnimation)
+    val currentSettings =
+      baseSettings.copy(
+        orientationMode = effectiveOrientation,
+        regionAnimation = effectiveAnimation,
+      )
     val intent =
       RecordingService.startRecordingIntent(
         context = appContext,

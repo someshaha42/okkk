@@ -32,6 +32,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Fullscreen
@@ -40,6 +41,9 @@ import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.StayCurrentLandscape
+import androidx.compose.material.icons.filled.StayCurrentPortrait
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VideoLibrary
@@ -82,8 +86,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.region.RegionSelectionManager
 import com.example.service.RecordingPhase
 import com.example.settings.AudioSourceOption
+import com.example.settings.OrientationMode
 import com.example.settings.RecordingMode
 import com.example.settings.RegionAnimationOption
 import com.example.settings.VideoBitrateOption
@@ -101,6 +107,7 @@ fun MainScreen(
   onStopClick: () -> Unit,
   onOpenRecordings: () -> Unit,
   onSelectMode: (RecordingMode) -> Unit,
+  onSelectOrientationMode: (OrientationMode) -> Unit,
   onSelectAudioSource: (AudioSourceOption) -> Unit,
   onSelectBitrate: (VideoBitrateOption) -> Unit,
   onSelectRegionAnimation: (RegionAnimationOption) -> Unit,
@@ -279,6 +286,13 @@ fun MainScreen(
                   )
                 }
               }
+              Box(modifier = Modifier.alpha(settingsAlpha)) {
+                OrientationModeCard(
+                  selectedOrientation = uiState.settings.orientationMode,
+                  enabled = isIdle,
+                  onSelectOrientation = onSelectOrientationMode,
+                )
+              }
               RegionAnimationCard(
                 selectedAnimation = uiState.settings.regionAnimation,
                 enabled = true,
@@ -323,6 +337,14 @@ fun MainScreen(
                   onRequestOverlayPermission = onRequestOverlayPermission,
                 )
               }
+            }
+
+            Box(modifier = Modifier.alpha(settingsAlpha)) {
+              OrientationModeCard(
+                selectedOrientation = uiState.settings.orientationMode,
+                enabled = isIdle,
+                onSelectOrientation = onSelectOrientationMode,
+              )
             }
 
             Box(modifier = Modifier.alpha(settingsAlpha)) {
@@ -485,14 +507,26 @@ private fun RecordingConsoleCard(
         modifier = Modifier.testTag("recording_timer"),
       )
 
-      // Contextual live session readout (mode + active audio route)
+      // Contextual live session readout (mode + orientation + active audio route)
       val subtitleText =
         if (phase == RecordingPhase.IDLE) {
+          val (resolvedW, resolvedH) =
+            RegionSelectionManager.resolveFullScreenDimensions(
+              uiState.screenWidthPx,
+              uiState.screenHeightPx,
+              uiState.settings.orientationMode,
+            )
           val modeSummary =
             if (uiState.settings.recordingMode == RecordingMode.FULL_SCREEN) {
-              "${stringResource(R.string.mode_fullscreen)} (${uiState.screenWidthPx}×${uiState.screenHeightPx})"
+              "${stringResource(R.string.mode_fullscreen)} (${resolvedW}×${resolvedH})"
             } else {
               "${stringResource(R.string.mode_region)} (${uiState.selectedPixelRegion.width}×${uiState.selectedPixelRegion.height})"
+            }
+          val orientationSummary =
+            when (uiState.settings.orientationMode) {
+              OrientationMode.NATIVE -> stringResource(R.string.orientation_native)
+              OrientationMode.LANDSCAPE_FIXED -> stringResource(R.string.orientation_landscape)
+              OrientationMode.PORTRAIT_FIXED -> stringResource(R.string.orientation_portrait)
             }
           val audioSummary =
             if (uiState.settings.audioSource == AudioSourceOption.INTERNAL) {
@@ -500,7 +534,11 @@ private fun RecordingConsoleCard(
             } else {
               stringResource(R.string.audio_microphone)
             }
-          "$modeSummary • $audioSummary"
+          if (uiState.settings.recordingMode == RecordingMode.FULL_SCREEN) {
+            "$modeSummary • $orientationSummary • $audioSummary"
+          } else {
+            "$modeSummary • $audioSummary"
+          }
         } else {
           listOfNotNull(
               uiState.session.activeResolutionLabel.takeIf { it.isNotBlank() },
@@ -636,6 +674,124 @@ private fun RecordingModeCard(
         onClick = { onSelectMode(RecordingMode.REGION) },
         modifier = Modifier.weight(1f),
       )
+    }
+  }
+}
+
+@Composable
+private fun OrientationModeCard(
+  selectedOrientation: OrientationMode,
+  enabled: Boolean,
+  onSelectOrientation: (OrientationMode) -> Unit,
+) {
+  SettingsSectionCard(
+    title = stringResource(R.string.section_orientation_mode),
+    icon = Icons.Default.ScreenRotation,
+  ) {
+    Column(
+      modifier = Modifier.fillMaxWidth(),
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      OrientationOptionRow(
+        title = stringResource(R.string.orientation_native),
+        subtitle = stringResource(R.string.orientation_native_desc),
+        icon = Icons.Default.ScreenRotation,
+        selected = selectedOrientation == OrientationMode.NATIVE,
+        enabled = enabled,
+        testTag = "orientation_native",
+        onClick = { onSelectOrientation(OrientationMode.NATIVE) },
+      )
+      OrientationOptionRow(
+        title = stringResource(R.string.orientation_landscape),
+        subtitle = stringResource(R.string.orientation_landscape_desc),
+        icon = Icons.Default.StayCurrentLandscape,
+        selected = selectedOrientation == OrientationMode.LANDSCAPE_FIXED,
+        enabled = enabled,
+        testTag = "orientation_landscape",
+        onClick = { onSelectOrientation(OrientationMode.LANDSCAPE_FIXED) },
+      )
+      OrientationOptionRow(
+        title = stringResource(R.string.orientation_portrait),
+        subtitle = stringResource(R.string.orientation_portrait_desc),
+        icon = Icons.Default.StayCurrentPortrait,
+        selected = selectedOrientation == OrientationMode.PORTRAIT_FIXED,
+        enabled = enabled,
+        testTag = "orientation_portrait",
+        onClick = { onSelectOrientation(OrientationMode.PORTRAIT_FIXED) },
+      )
+    }
+  }
+}
+
+@Composable
+private fun OrientationOptionRow(
+  title: String,
+  subtitle: String,
+  icon: ImageVector,
+  selected: Boolean,
+  enabled: Boolean,
+  testTag: String,
+  onClick: () -> Unit,
+) {
+  val studioColors = LocalStudioColors.current
+  val containerColor =
+    if (selected) studioColors.recordContainer
+    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+  val borderColor =
+    if (selected) studioColors.recordAccent else MaterialTheme.colorScheme.outlineVariant
+  val accentColor =
+    if (selected) studioColors.recordAccent else MaterialTheme.colorScheme.onSurface
+
+  Surface(
+    modifier =
+      Modifier.fillMaxWidth()
+        .minimumInteractiveComponentSize()
+        .clip(RoundedCornerShape(14.dp))
+        .clickable(enabled = enabled, onClick = onClick)
+        .testTag(testTag),
+    shape = RoundedCornerShape(14.dp),
+    color = containerColor,
+    border = BorderStroke(if (selected) 1.5.dp else 1.dp, borderColor),
+  ) {
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      Icon(
+        imageVector = icon,
+        contentDescription = null,
+        modifier = Modifier.size(20.dp),
+        tint = accentColor,
+      )
+      Column(
+        modifier = Modifier.weight(1f),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+      ) {
+        Text(
+          text = title,
+          style = MaterialTheme.typography.labelLarge,
+          fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+          color = accentColor,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+          text = subtitle,
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+      if (selected) {
+        Icon(
+          imageVector = Icons.Default.CheckCircle,
+          contentDescription = null,
+          modifier = Modifier.size(18.dp),
+          tint = studioColors.recordAccent,
+        )
+      }
     }
   }
 }

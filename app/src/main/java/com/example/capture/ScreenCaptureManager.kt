@@ -23,6 +23,7 @@ import android.view.Display
 import android.view.Surface
 import android.view.WindowManager
 import com.example.region.PixelRegion
+import com.example.settings.OrientationMode
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -33,15 +34,19 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Manages MediaProjection, VirtualDisplay, dynamic display orientation changes, and the OpenGL ES
  * 2.0 GPU surface-to-surface pipeline for both native Full Screen capture and pixel-exact Region
- * cropping without CPU frame copies.
+ * cropping without CPU frame copies. Supports seamless encoder surface swapping in Native
+ * orientation mode so the recording canvas immediately matches rotated screen dimensions without
+ * black borders.
  */
 class ScreenCaptureManager(
   private val context: Context,
   private val mediaProjection: MediaProjection,
-  private val outputSurface: Surface,
-  private val outputWidth: Int,
-  private val outputHeight: Int,
+  private val initialOutputSurface: Surface,
+  private val initialOutputWidth: Int,
+  private val initialOutputHeight: Int,
+  private val orientationMode: OrientationMode,
   private val cropRegion: PixelRegion?,
+  private val onOrientationCanvasChanged: (newWidth: Int, newHeight: Int) -> Unit,
   private val onProjectionStopped: () -> Unit,
 ) {
   private val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -54,7 +59,10 @@ class ScreenCaptureManager(
 
   private var currentCaptureWidth = 0
   private var currentCaptureHeight = 0
+  private var currentOutputWidth = initialOutputWidth
+  private var currentOutputHeight = initialOutputHeight
   private var currentDensityDpi = DisplayMetrics.DENSITY_DEFAULT
+  private var pendingOrientationRunnable: Runnable? = null
 
   private val projectionCallback =
     object : MediaProjection.Callback() {
@@ -107,9 +115,9 @@ class ScreenCaptureManager(
       try {
         val pipeline =
           GlVideoPipeline(
-            encoderSurface = outputSurface,
-            outputWidth = outputWidth,
-            outputHeight = outputHeight,
+            initialEncoderSurface = initialOutputSurface,
+            outputWidth = currentOutputWidth,
+            outputHeight = currentOutputHeight,
             initialCaptureWidth = w,
             initialCaptureHeight = h,
             cropRegion = cropRegion,
@@ -150,6 +158,28 @@ class ScreenCaptureManager(
     glHandler?.post { glPipeline?.setPaused(paused) }
   }
 
+  fun setFrameSubmissionPaused(paused: Boolean) {
+    val handler = glHandler ?: return
+    val latch = CountDownLatch(1)
+    handler.post {
+      glPipeline?.setSwitching(paused)
+      latch.countDown()
+    }
+    latch.await(1, TimeUnit.SECONDS)
+  }
+
+  fun swapEncoderSurface(newSurface: Surface, newWidth: Int, newHeight: Int) {
+    val handler = glHandler ?: return
+    val latch = CountDownLatch(1)
+    handler.post {
+      currentOutputWidth = newWidth
+      currentOutputHeight = newHeight
+      glPipeline?.swapEncoderSurface(newSurface, newWidth, newHeight)
+      latch.countDown()
+    }
+    latch.await(2, TimeUnit.SECONDS)
+  }
+
   private fun resizeCapture(newW: Int, newH: Int, newDpi: Int = currentDensityDpi) {
     val evenW = if (newW % 2 == 0) newW else (newW - 1).coerceAtLeast(2)
     val evenH = if (newH % 2 == 0) newH else (newH - 1).coerceAtLeast(2)
@@ -159,9 +189,25 @@ class ScreenCaptureManager(
     currentCaptureHeight = evenH
     currentDensityDpi = newDpi
 
-    glHandler?.post {
+    val handler = glHandler ?: return
+    handler.post {
       glPipeline?.updateCaptureDimensions(evenW, evenH)
       runCatching { virtualDisplay?.resize(evenW, evenH, newDpi) }
+
+      if (
+        orientationMode == OrientationMode.NATIVE &&
+          cropRegion == null &&
+          (evenW > evenH) != (currentOutputWidth > currentOutputHeight)
+      ) {
+        pendingOrientationRunnable?.let { handler.removeCallbacks(it) }
+        val runnable = Runnable {
+          if (!isReleased.get()) {
+            onOrientationCanvasChanged(evenW, evenH)
+          }
+        }
+        pendingOrientationRunnable = runnable
+        handler.postDelayed(runnable, 280L)
+      }
     }
   }
 
@@ -170,6 +216,10 @@ class ScreenCaptureManager(
 
     runCatching { displayManager.unregisterDisplayListener(displayListener) }
     runCatching { mediaProjection.unregisterCallback(projectionCallback) }
+    runCatching {
+      pendingOrientationRunnable?.let { glHandler?.removeCallbacks(it) }
+      pendingOrientationRunnable = null
+    }
     runCatching { virtualDisplay?.release() }
     virtualDisplay = null
 
@@ -214,13 +264,13 @@ class ScreenCaptureManager(
 
 /**
  * Lightweight OpenGL ES 2.0 OES-to-RGBA surface pipeline. Renders VirtualDisplay frames directly on
- * GPU onto MediaCodec's input EGLSurface with exact region UV cropping and monotonic presentation
- * timestamps across pause/resume.
+ * GPU onto MediaCodec's input EGLSurface with exact region UV cropping, seamless encoder surface
+ * swapping on rotation, and monotonic presentation timestamps across pause/resume.
  */
 private class GlVideoPipeline(
-  private val encoderSurface: Surface,
-  private val outputWidth: Int,
-  private val outputHeight: Int,
+  initialEncoderSurface: Surface,
+  private var outputWidth: Int,
+  private var outputHeight: Int,
   initialCaptureWidth: Int,
   initialCaptureHeight: Int,
   private val cropRegion: PixelRegion?,
@@ -228,7 +278,9 @@ private class GlVideoPipeline(
 
   private var eglDisplay: EGLDisplay = EGL14.EGL_NO_DISPLAY
   private var eglContext: EGLContext = EGL14.EGL_NO_CONTEXT
+  private var eglConfig: EGLConfig? = null
   private var eglSurface: EGLSurface = EGL14.EGL_NO_SURFACE
+  private var currentEncoderSurface: Surface = initialEncoderSurface
 
   private var programId = 0
   private var textureId = 0
@@ -250,6 +302,7 @@ private class GlVideoPipeline(
     ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
 
   private var isPaused = false
+  private var isSwitching = false
   private var firstFrameNs = 0L
   private var pauseStartNs = 0L
   private var pausedAccumulatedNs = 0L
@@ -277,6 +330,7 @@ private class GlVideoPipeline(
       "Unable to find RGB888+recordable EGLConfig"
     }
     val config = configs[0] ?: throw IllegalStateException("Null EGLConfig")
+    eglConfig = config
 
     val contextAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
     eglContext =
@@ -284,7 +338,8 @@ private class GlVideoPipeline(
     check(eglContext != EGL14.EGL_NO_CONTEXT) { "Failed to create EGLContext" }
 
     val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
-    eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, config, encoderSurface, surfaceAttribs, 0)
+    eglSurface =
+      EGL14.eglCreateWindowSurface(eglDisplay, config, currentEncoderSurface, surfaceAttribs, 0)
     check(eglSurface != EGL14.EGL_NO_SURFACE) { "Failed to create EGLWindowSurface" }
 
     check(EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
@@ -345,6 +400,38 @@ private class GlVideoPipeline(
     }
   }
 
+  fun setSwitching(switching: Boolean) {
+    isSwitching = switching
+  }
+
+  fun swapEncoderSurface(newSurface: Surface, newOutWidth: Int, newOutHeight: Int) {
+    if (released || eglDisplay == EGL14.EGL_NO_DISPLAY) return
+    val config = eglConfig ?: return
+
+    EGL14.eglMakeCurrent(eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
+    if (eglSurface != EGL14.EGL_NO_SURFACE) {
+      EGL14.eglDestroySurface(eglDisplay, eglSurface)
+    }
+
+    currentEncoderSurface = newSurface
+    outputWidth = newOutWidth
+    outputHeight = newOutHeight
+    firstFrameNs = 0L
+    pausedAccumulatedNs = 0L
+    pauseStartNs = 0L
+
+    val surfaceAttribs = intArrayOf(EGL14.EGL_NONE)
+    eglSurface =
+      EGL14.eglCreateWindowSurface(eglDisplay, config, currentEncoderSurface, surfaceAttribs, 0)
+    check(eglSurface != EGL14.EGL_NO_SURFACE) { "Failed to recreate EGLWindowSurface" }
+    check(EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+      "eglMakeCurrent failed after surface swap"
+    }
+
+    recomputeGeometry()
+    isSwitching = false
+  }
+
   fun updateCaptureDimensions(newW: Int, newH: Int) {
     captureWidth = newW
     captureHeight = newH
@@ -367,7 +454,7 @@ private class GlVideoPipeline(
       tBottom = 0f
       tTop = 1f
 
-      // Fit rotated capture cleanly inside the output encoder frame without distortion
+      // Fit rotated capture cleanly inside fixed orientation canvas without distortion
       val captureAspect = captureWidth.toFloat() / captureHeight.toFloat()
       val outputAspect = outputWidth.toFloat() / outputHeight.toFloat()
       if (kotlin.math.abs(captureAspect - outputAspect) > 0.01f) {
@@ -433,7 +520,7 @@ private class GlVideoPipeline(
     if (released) return
     try {
       st.updateTexImage()
-      if (isPaused) return
+      if (isPaused || isSwitching) return
 
       st.getTransformMatrix(stMatrix)
       val nowNs = SystemClock.elapsedRealtimeNanos()

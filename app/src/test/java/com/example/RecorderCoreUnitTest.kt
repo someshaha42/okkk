@@ -3,6 +3,7 @@ package com.example
 import com.example.region.RegionSelectionManager
 import com.example.settings.AudioSourceOption
 import com.example.settings.NormalizedRegion
+import com.example.settings.OrientationMode
 import com.example.settings.RecordingMode
 import com.example.settings.RecordingSettings
 import com.example.settings.RegionAnimationOption
@@ -17,9 +18,37 @@ class RecorderCoreUnitTest {
   fun `default settings match specification`() {
     val defaults = RecordingSettings()
     assertEquals(RecordingMode.FULL_SCREEN, defaults.recordingMode)
+    assertEquals(OrientationMode.NATIVE, defaults.orientationMode)
     assertEquals(AudioSourceOption.INTERNAL, defaults.audioSource)
     assertEquals(VideoBitrateOption.LOSSLESS, defaults.videoBitrate)
     assertEquals(RegionAnimationOption.SHOW, defaults.regionAnimation)
+  }
+
+  @Test
+  fun `orientation mode resolves native, landscape fixed, and portrait fixed dimensions cleanly`() {
+    val nativePortrait =
+      RegionSelectionManager.resolveFullScreenDimensions(1081, 2401, OrientationMode.NATIVE)
+    assertEquals(1080 to 2400, nativePortrait)
+
+    val nativeLandscape =
+      RegionSelectionManager.resolveFullScreenDimensions(2400, 1080, OrientationMode.NATIVE)
+    assertEquals(2400 to 1080, nativeLandscape)
+
+    val landscapeFromPortrait =
+      RegionSelectionManager.resolveFullScreenDimensions(
+        1080,
+        2400,
+        OrientationMode.LANDSCAPE_FIXED,
+      )
+    assertEquals(2400 to 1080, landscapeFromPortrait)
+
+    val portraitFromLandscape =
+      RegionSelectionManager.resolveFullScreenDimensions(
+        2400,
+        1080,
+        OrientationMode.PORTRAIT_FIXED,
+      )
+    assertEquals(1080 to 2400, portraitFromLandscape)
   }
 
   @Test

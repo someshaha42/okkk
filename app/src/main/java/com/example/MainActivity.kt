@@ -168,6 +168,7 @@ private fun FrameCutApp(
             navController.navigate(ROUTE_RECORDINGS) { launchSingleTop = true }
           },
           onSelectMode = { viewModel.setRecordingMode(it) },
+          onSelectOrientationMode = { viewModel.setOrientationMode(it) },
           onSelectAudioSource = { viewModel.setAudioSource(it) },
           onSelectBitrate = { viewModel.setVideoBitrate(it) },
           onSelectRegionAnimation = { viewModel.setRegionAnimation(it) },

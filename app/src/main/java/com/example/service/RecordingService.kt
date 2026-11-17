@@ -32,10 +32,13 @@ import com.example.region.RegionOverlayManager
 import com.example.region.RegionSelectionManager
 import com.example.settings.AudioSourceOption
 import com.example.settings.NormalizedRegion
+import com.example.settings.OrientationMode
 import com.example.settings.RecordingMode
 import com.example.settings.RecordingSettings
 import com.example.settings.RegionAnimationOption
 import com.example.settings.VideoBitrateOption
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -104,6 +107,9 @@ class RecordingService : Service() {
   private var pauseStartElapsedMs = 0L
   private var pausedAccumulatedMs = 0L
   private var currentMode = RecordingMode.FULL_SCREEN
+  private var activeProjection: MediaProjection? = null
+  private var activeSettings: RecordingSettings? = null
+  private val orientationSwitchMutex = Mutex()
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -181,6 +187,13 @@ class RecordingService : Service() {
           RecordingMode.valueOf(intent.getStringExtra(EXTRA_MODE) ?: RecordingMode.FULL_SCREEN.name)
         }
         .getOrDefault(RecordingMode.FULL_SCREEN)
+    val orientationMode =
+      runCatching {
+          OrientationMode.valueOf(
+            intent.getStringExtra(EXTRA_ORIENTATION_MODE) ?: OrientationMode.NATIVE.name,
+          )
+        }
+        .getOrDefault(OrientationMode.NATIVE)
     val audioSource =
       runCatching {
           AudioSourceOption.valueOf(
@@ -215,12 +228,14 @@ class RecordingService : Service() {
     val settings =
       RecordingSettings(
         recordingMode = mode,
+        orientationMode = orientationMode,
         audioSource = audioSource,
         videoBitrate = bitrate,
         regionAnimation = animation,
         selectedRegion = normRegion,
       )
     currentMode = mode
+    activeSettings = settings
 
     // Android 14+ requires startForeground() BEFORE MediaProjectionManager.getMediaProjection()
     startForegroundCompat(isPaused = false, audioSource = audioSource)
@@ -254,6 +269,7 @@ class RecordingService : Service() {
 
   private fun startEngine(mediaProjection: MediaProjection, settings: RecordingSettings) {
     try {
+      activeProjection = mediaProjection
       val (screenW, screenH, _) = ScreenCaptureManager.queryScreenMetrics(this)
       val pixelRegion: PixelRegion? =
         if (settings.recordingMode == RecordingMode.REGION) {
@@ -266,7 +282,11 @@ class RecordingService : Service() {
         if (pixelRegion != null) {
           pixelRegion.width to pixelRegion.height
         } else {
-          RegionSelectionManager.resolveFullScreenDimensions(screenW, screenH)
+          RegionSelectionManager.resolveFullScreenDimensions(
+            screenW,
+            screenH,
+            settings.orientationMode,
+          )
         }
 
       val hasAudioPermission =
@@ -307,10 +327,14 @@ class RecordingService : Service() {
         ScreenCaptureManager(
           context = this,
           mediaProjection = mediaProjection,
-          outputSurface = encoder.getInputSurface(),
-          outputWidth = selection.alignedWidth,
-          outputHeight = selection.alignedHeight,
+          initialOutputSurface = encoder.getInputSurface(),
+          initialOutputWidth = selection.alignedWidth,
+          initialOutputHeight = selection.alignedHeight,
+          orientationMode = settings.orientationMode,
           cropRegion = pixelRegion,
+          onOrientationCanvasChanged = { newW, newH ->
+            handleNativeOrientationSwitch(newW, newH)
+          },
           onProjectionStopped = { stopRecording() },
         )
       screenCaptureManager = captureMgr
@@ -424,9 +448,93 @@ class RecordingService : Service() {
     }
   }
 
+  private fun handleNativeOrientationSwitch(newW: Int, newH: Int) {
+    serviceScope.launch(Dispatchers.IO) {
+      orientationSwitchMutex.withLock {
+        val phase = RecordingSessionStore.state.value.phase
+        if (phase != RecordingPhase.RECORDING && phase != RecordingPhase.PAUSED) return@withLock
+        val settings = activeSettings ?: return@withLock
+        val projection = activeProjection ?: return@withLock
+        val captureMgr = screenCaptureManager ?: return@withLock
+        if (settings.orientationMode != OrientationMode.NATIVE || settings.recordingMode != RecordingMode.FULL_SCREEN) {
+          return@withLock
+        }
+
+        val (targetW, targetH) =
+          RegionSelectionManager.resolveFullScreenDimensions(newW, newH, OrientationMode.NATIVE)
+
+        Log.i(TAG, "Native orientation switch -> reconfiguring canvas to ${targetW}x${targetH}")
+        captureMgr.setFrameSubmissionPaused(true)
+
+        runCatching { audioCaptureManager?.stopAndRelease() }
+        audioCaptureManager = null
+        runCatching { videoEncoder?.stopAndRelease() }
+        videoEncoder = null
+        val savedSegment = runCatching { muxerManager?.finishAndRelease() }.getOrNull()
+        muxerManager = null
+
+        val hasAudioPermission =
+          ContextCompat.checkSelfPermission(this@RecordingService, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        val expectAudio =
+          hasAudioPermission &&
+            (settings.audioSource == AudioSourceOption.MICROPHONE ||
+              Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+
+        val newMuxer = MediaMuxerManager(this@RecordingService, expectAudioTrackInitial = expectAudio)
+        newMuxer.prepare()
+        muxerManager = newMuxer
+
+        val newEncoder = VideoEncoder(targetW, targetH, settings.videoBitrate, newMuxer)
+        val selection = newEncoder.prepare()
+        videoEncoder = newEncoder
+
+        captureMgr.swapEncoderSurface(
+          newSurface = newEncoder.getInputSurface(),
+          newWidth = selection.alignedWidth,
+          newHeight = selection.alignedHeight,
+        )
+
+        val newAudio =
+          AudioCaptureManager(
+            context = this@RecordingService,
+            audioSource = settings.audioSource,
+            mediaProjection = projection,
+            muxerManager = newMuxer,
+            onStatusChanged = { status ->
+              RecordingSessionStore.update {
+                it.copy(
+                  activeAudioLabel = status.activeDeviceLabel,
+                  warningMessage = status.warningMessage ?: it.warningMessage,
+                )
+              }
+            },
+          )
+        audioCaptureManager = newAudio
+        val audioStatus = newAudio.start()
+        if (RecordingSessionStore.state.value.phase == RecordingPhase.PAUSED) {
+          newAudio.setPaused(true)
+        }
+
+        RecordingSessionStore.update { prev ->
+          prev.copy(
+            activeAudioLabel = audioStatus.activeDeviceLabel,
+            activeEncoderName = selection.codecName,
+            activeBitrateMbps = (selection.effectiveBitrateBps / 1_000_000).coerceAtLeast(1),
+            activeResolutionLabel = "${selection.alignedWidth}×${selection.alignedHeight}",
+            lastSavedUri = savedSegment?.uri ?: prev.lastSavedUri,
+            lastSavedName = savedSegment?.displayName ?: prev.lastSavedName,
+          )
+        }
+      }
+    }
+  }
+
   private fun releaseAllEngineResources() =
     run {
       overlayManager?.hide()
+      activeProjection = null
+      activeSettings = null
       runCatching { screenCaptureManager?.stopAndRelease() }
         .onFailure { Log.e(TAG, "Error stopping ScreenCaptureManager", it) }
       screenCaptureManager = null
@@ -584,6 +692,7 @@ class RecordingService : Service() {
     const val EXTRA_RESULT_CODE = "extra_result_code"
     const val EXTRA_RESULT_DATA = "extra_result_data"
     const val EXTRA_MODE = "extra_mode"
+    const val EXTRA_ORIENTATION_MODE = "extra_orientation_mode"
     const val EXTRA_AUDIO_SOURCE = "extra_audio_source"
     const val EXTRA_BITRATE = "extra_bitrate"
     const val EXTRA_REGION_ANIMATION = "extra_region_animation"
@@ -603,6 +712,7 @@ class RecordingService : Service() {
         putExtra(EXTRA_RESULT_CODE, resultCode)
         putExtra(EXTRA_RESULT_DATA, resultData)
         putExtra(EXTRA_MODE, settings.recordingMode.name)
+        putExtra(EXTRA_ORIENTATION_MODE, settings.orientationMode.name)
         putExtra(EXTRA_AUDIO_SOURCE, settings.audioSource.name)
         putExtra(EXTRA_BITRATE, settings.videoBitrate.name)
         putExtra(EXTRA_REGION_ANIMATION, settings.regionAnimation.name)

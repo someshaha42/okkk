@@ -20,6 +20,12 @@ enum class RecordingMode {
   REGION,
 }
 
+enum class OrientationMode {
+  NATIVE,
+  LANDSCAPE_FIXED,
+  PORTRAIT_FIXED,
+}
+
 enum class AudioSourceOption {
   INTERNAL,
   MICROPHONE,
@@ -60,6 +66,7 @@ data class NormalizedRegion(
 
 data class RecordingSettings(
   val recordingMode: RecordingMode = RecordingMode.FULL_SCREEN,
+  val orientationMode: OrientationMode = OrientationMode.NATIVE,
   val audioSource: AudioSourceOption = AudioSourceOption.INTERNAL,
   val videoBitrate: VideoBitrateOption = VideoBitrateOption.LOSSLESS,
   val regionAnimation: RegionAnimationOption = RegionAnimationOption.SHOW,
@@ -88,6 +95,7 @@ class RecordingSettingsRepository(private val context: Context) {
 
   private object Keys {
     val RECORDING_MODE = stringPreferencesKey("recording_mode")
+    val ORIENTATION_MODE = stringPreferencesKey("orientation_mode")
     val AUDIO_SOURCE = stringPreferencesKey("audio_source")
     val VIDEO_BITRATE = stringPreferencesKey("video_bitrate")
     val REGION_ANIMATION = stringPreferencesKey("region_animation")
@@ -102,6 +110,8 @@ class RecordingSettingsRepository(private val context: Context) {
       RecordingSettings(
         recordingMode =
           enumValueOrDefault(prefs[Keys.RECORDING_MODE], RecordingMode.FULL_SCREEN),
+        orientationMode =
+          enumValueOrDefault(prefs[Keys.ORIENTATION_MODE], OrientationMode.NATIVE),
         audioSource =
           enumValueOrDefault(prefs[Keys.AUDIO_SOURCE], AudioSourceOption.INTERNAL),
         videoBitrate =
@@ -121,6 +131,10 @@ class RecordingSettingsRepository(private val context: Context) {
 
   suspend fun setRecordingMode(mode: RecordingMode) {
     context.settingsDataStore.edit { it[Keys.RECORDING_MODE] = mode.name }
+  }
+
+  suspend fun setOrientationMode(mode: OrientationMode) {
+    context.settingsDataStore.edit { it[Keys.ORIENTATION_MODE] = mode.name }
   }
 
   suspend fun setAudioSource(source: AudioSourceOption) {
