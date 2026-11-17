@@ -8,6 +8,7 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RectF
+import android.graphics.Region
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -22,8 +23,9 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Optional floating region indicator overlay. When RegionAnimationOption.SHOW is enabled AND the
  * user has granted Display Over Other Apps permission, attaches a non-touchable animated deep-red
- * dashed border strictly outside the crop rectangle. All WindowManager and ValueAnimator calls are
- * strictly marshaled onto the Main Looper thread so hide() never fails from background threads.
+ * dashed border strictly OUTSIDE the crop rectangle (with fitInsetsTypes = 0, screen-origin
+ * correction, and clipOutRect protection) so zero border or badge pixels are ever recorded into the
+ * cropped MP4 output.
  */
 class RegionOverlayManager(private val context: Context) {
 
@@ -41,7 +43,10 @@ class RegionOverlayManager(private val context: Context) {
       hideInternal()
       if (!enabled) return@runOnMainThread
       if (!canDrawOverlay()) {
-        Log.d(TAG, "Overlay permission unavailable; continuing region recording without floating border")
+        Log.d(
+          TAG,
+          "Overlay permission unavailable; continuing region recording without floating border",
+        )
         return@runOnMainThread
       }
 
@@ -65,8 +70,14 @@ class RegionOverlayManager(private val context: Context) {
             PixelFormat.TRANSLUCENT,
           )
           .apply {
+            x = 0
+            y = 0
             gravity = Gravity.TOP or Gravity.START
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+              fitInsetsTypes = 0
+              layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
               layoutInDisplayCutoutMode =
                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
@@ -116,13 +127,15 @@ class RegionOverlayManager(private val context: Context) {
   }
 }
 
-private class RegionBorderOverlayView(
+internal class RegionBorderOverlayView(
   context: Context,
   private val region: PixelRegion,
 ) : View(context) {
 
   private val density = resources.displayMetrics.density
   private val strokePx = 3f * density
+  private val backingExtraPx = 2f * density
+  private val safetyGapPx = 3f * density
   private val dashLength = 14f * density
   private val gapLength = 9f * density
   private val dashPeriod = dashLength + gapLength
@@ -140,7 +153,7 @@ private class RegionBorderOverlayView(
   private val backingPaint =
     Paint(Paint.ANTI_ALIAS_FLAG).apply {
       style = Paint.Style.STROKE
-      strokeWidth = strokePx + 2f * density
+      strokeWidth = strokePx + backingExtraPx
       color = Color.argb(110, 17, 19, 24)
     }
 
@@ -157,6 +170,7 @@ private class RegionBorderOverlayView(
       isFakeBoldText = true
     }
 
+  private val windowLocation = IntArray(2)
   private val drawRect = RectF()
   private val badgeRect = RectF()
   private var animator: ValueAnimator? = null
@@ -198,32 +212,73 @@ private class RegionBorderOverlayView(
 
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
-    // Position the stroke strictly outside the crop region so no border pixels enter the recording
-    val half = strokePx / 2f + 1.5f * density
+    getLocationOnScreen(windowLocation)
+    val offsetX = windowLocation[0].toFloat()
+    val offsetY = windowLocation[1].toFloat()
+
+    // Convert physical screen crop coordinates into this overlay view's local coordinates
+    val localLeft = region.left - offsetX
+    val localTop = region.top - offsetY
+    val localRight = region.right - offsetX
+    val localBottom = region.bottom - offsetY
+
+    // Offset stroke strictly outside the crop rectangle + safety gap so zero pixels bleed into video
+    val outwardOffset = safetyGapPx + (strokePx + backingExtraPx) / 2f
     drawRect.set(
-      (region.left - half).coerceAtLeast(half),
-      (region.top - half).coerceAtLeast(half),
-      (region.right + half).coerceAtMost(width - half),
-      (region.bottom + half).coerceAtMost(height - half),
+      localLeft - outwardOffset,
+      localTop - outwardOffset,
+      localRight + outwardOffset,
+      localBottom + outwardOffset,
     )
 
-    canvas.drawRect(drawRect, backingPaint)
-    borderPaint.pathEffect = DashPathEffect(floatArrayOf(dashLength, gapLength), phase)
-    canvas.drawRect(drawRect, borderPaint)
+    val saveCount = canvas.save()
+    try {
+      // Hard-exclude the entire recorded crop area + safety margin from receiving any draw pixels
+      val clipL = localLeft - safetyGapPx
+      val clipT = localTop - safetyGapPx
+      val clipR = localRight + safetyGapPx
+      val clipB = localBottom + safetyGapPx
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        canvas.clipOutRect(clipL, clipT, clipR, clipB)
+      } else {
+        @Suppress("DEPRECATION")
+        canvas.clipRect(clipL, clipT, clipR, clipB, Region.Op.DIFFERENCE)
+      }
 
-    val label = if (paused) "PAUSED" else "REC REGION"
-    val labelW = textPaint.measureText(label) + 14f * density
-    val labelH = 18f * density
-    val badgeTop = (drawRect.top - labelH - 4f * density).coerceAtLeast(4f * density)
-    val badgeLeft = drawRect.left.coerceAtMost((width - labelW - 4f * density).coerceAtLeast(0f))
-    badgeRect.set(badgeLeft, badgeTop, badgeLeft + labelW, badgeTop + labelH)
-    canvas.drawRoundRect(badgeRect, 5f * density, 5f * density, badgePaint)
-    canvas.drawText(
-      label,
-      badgeRect.left + 7f * density,
-      badgeRect.bottom - 5f * density,
-      textPaint,
-    )
+      canvas.drawRect(drawRect, backingPaint)
+      borderPaint.pathEffect = DashPathEffect(floatArrayOf(dashLength, gapLength), phase)
+      canvas.drawRect(drawRect, borderPaint)
+
+      val label = if (paused) "PAUSED" else "REC REGION"
+      val labelW = textPaint.measureText(label) + 14f * density
+      val labelH = 18f * density
+      val badgeGap = 4f * density
+      val outerStrokeEdgeTop = drawRect.top - (strokePx + backingExtraPx) / 2f
+      val outerStrokeEdgeBottom = drawRect.bottom + (strokePx + backingExtraPx) / 2f
+
+      // Draw badge only where it fits cleanly outside the crop rectangle
+      val badgeTop =
+        when {
+          outerStrokeEdgeTop - labelH - badgeGap >= 0f -> outerStrokeEdgeTop - labelH - badgeGap
+          outerStrokeEdgeBottom + labelH + badgeGap <= height -> outerStrokeEdgeBottom + badgeGap
+          else -> null
+        }
+
+      if (badgeTop != null) {
+        val badgeLeft =
+          drawRect.left.coerceIn(4f * density, (width - labelW - 4f * density).coerceAtLeast(4f * density))
+        badgeRect.set(badgeLeft, badgeTop, badgeLeft + labelW, badgeTop + labelH)
+        canvas.drawRoundRect(badgeRect, 5f * density, 5f * density, badgePaint)
+        canvas.drawText(
+          label,
+          badgeRect.left + 7f * density,
+          badgeRect.bottom - 5f * density,
+          textPaint,
+        )
+      }
+    } finally {
+      canvas.restoreToCount(saveCount)
+    }
   }
 
   override fun onDetachedFromWindow() {
