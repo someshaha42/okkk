@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FrameCut</string>
+    <string name="notification_channel_name">Screen Recording</string>
+    <string name="notification_channel_description">Controls and status for active FrameCut screen recordings</string>
+    <string name="notification_title_recording">Recording active</string>
+    <string name="notification_title_paused">Recording paused</string>
+    <string name="notification_action_pause">Pause</string>
+    <string name="notification_action_resume">Resume</string>
+    <string name="notification_action_stop">Stop</string>
+    <string name="color_mode_original">Original Color</string>
+    <string name="color_mode_full_rgb">Full RGB</string>
+    <string name="color_mode_deep_10bit">Deep Color (10-bit)</string>
+</resources>

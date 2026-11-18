@@ -1,6 +1,6 @@
 {
   "name": "FrameCut",
-  "description": "Professional native Android screen and region recorder with 60 FPS hardware H.264 encoding, OpenGL ES region cropping, and internal or microphone audio capture.",
+  "description": "Native Android screen and region recorder with a permanent Vulkan compute color pipeline (Original Color, Full RGB, Deep Color 10-bit) and MediaCodec hardware encoding.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

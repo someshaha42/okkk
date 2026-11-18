@@ -1,25 +1,21 @@
 # FrameCut
 
-FrameCut is a browser-based screen and region recorder rewritten in React, TypeScript, Vite, and Tailwind CSS from the original Android Jetpack Compose application.
+FrameCut is a native Android screen and region recorder built with Jetpack Compose, a permanent **Vulkan 1.1 GPU compute & texture-sampling pipeline**, and hardware-accelerated **MediaCodec** video/audio encoding.
 
-## Features
+## Architecture & Features
 
-- **Full Screen & Region Capture**: Record an entire browser tab, window, or display via `getDisplayMedia`, or crop to a custom pixel-aligned rectangle using the offscreen HTML5 Canvas pipeline.
-- **Interactive Region Selector**: Drag to reposition, resize via 8 corner/edge handles, and snap to `Free`, `16:9`, `9:16`, `4:3`, or `1:1` aspect presets.
-- **Orientation & Bitrate Configuration**: Switch between Portrait and Landscape canvas output and configure target encoding bitrates (`100 Mbps` – `350 Mbps`).
-- **Audio Capture**: Record Internal Audio (system/tab audio shared in the display picker) or Microphone input.
-- **Animated Region Frame**: Toggle the live crimson dashed region border preview (`Show` / `Hide`).
-- **Recorded Videos Library**: Persist captured videos locally in IndexedDB with built-in playback, download/share, and deletion confirmation.
+- **Permanent Vulkan Graphics Pipeline**: A native C++20/JNI Vulkan compute shader (`color_process.comp`) performs hardware texture sampling, crop UV mapping, scaling, and color processing.
+- **Unified Preview & Recorded Video Parity**: Both the live in-app preview `SurfaceView` and the `MediaCodec` input `Surface` are fed from the exact same processed Vulkan compute output image in a single submission.
+- **Three Color Modes**:
+  - **Original Color** *(default)*: 1:1 native color passthrough with BT.709 SDR parity.
+  - **Full RGB**: Full `0–255` dynamic range (`COLOR_RANGE_FULL`) without `16–235` studio swing compression.
+  - **Deep Color (10-bit)**: Wide-gamut linear-light processing with 10-bit (`1024`-step) Interleaved Gradient Noise micro-dither targeting `HEVCProfileMain10` with safe 8-bit hardware fallback.
+- **MediaCodec + MediaMuxer Output**: Hardware HEVC / AVC video encoding + AAC-LC (`48 kHz`, `192 kbps`) audio (`Internal Audio` via `AudioPlaybackCapture` or `Microphone`), saved directly to `Movies/FrameCut`.
+- **Full Screen & Custom Region Cropping**: Interactive 8-handle cropper with `Free`, `16:9`, `9:16`, `4:3`, and `1:1` presets plus an optional floating border overlay.
+- **Automated GitHub Actions APK Builds**: `.github/workflows/build-apk.yml` automatically builds and uploads `FrameCut-debug-apk` via Gradle `9.3.1` and Java `17`.
 
-## Development
-
-```bash
-npm install
-npm run dev
-```
-
-Build for production:
+## Local Build
 
 ```bash
-npm run build
+gradle :app:assembleDebug --stacktrace
 ```

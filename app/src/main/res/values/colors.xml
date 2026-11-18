@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="studio_bg_dark">#0D0F14</color>
+    <color name="studio_surface_dark">#151821</color>
+    <color name="studio_record_red">#DC2626</color>
+    <color name="studio_amber">#D97706</color>
+    <color name="studio_emerald">#10B981</color>
+    <color name="ic_launcher_background">#0D0F14</color>
+</resources>

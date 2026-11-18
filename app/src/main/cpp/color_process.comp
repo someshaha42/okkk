@@ -1,0 +1,77 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uSourceTex;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D uOutputImage;
+
+layout(push_constant) uniform PushConstants {
+    vec4 uvRect;      // (u0, v0, uWidth, vHeight)
+    uvec2 dstSize;    // (dstWidth, dstHeight)
+    uint colorMode;   // 0 = Original Color, 1 = Full RGB, 2 = Deep Color (10-bit)
+    uint frameIndex;  // monotonic frame index for micro-dither
+} pc;
+
+vec3 srgbToLinear(vec3 c) {
+    bvec3 cutoff = lessThanEqual(c, vec3(0.04045));
+    vec3 low = c / 12.92;
+    vec3 high = pow((c + vec3(0.055)) / 1.055, vec3(2.4));
+    return mix(high, low, cutoff);
+}
+
+vec3 linearToSrgb(vec3 c) {
+    vec3 clamped = clamp(c, 0.0, 1.0);
+    bvec3 cutoff = lessThanEqual(clamped, vec3(0.0031308));
+    vec3 low = clamped * 12.92;
+    vec3 high = 1.055 * pow(clamped, vec3(1.0 / 2.4)) - vec3(0.055);
+    return mix(high, low, cutoff);
+}
+
+float interleavedGradientNoise(vec2 pixelCoord, uint frameIdx) {
+    vec2 jitter = pixelCoord + vec2(float(frameIdx & 63u) * 5.588238, float((frameIdx >> 6) & 63u) * 7.139241);
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(jitter, magic.xy))) - 0.5;
+}
+
+void main() {
+    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
+    if (gid.x >= int(pc.dstSize.x) || gid.y >= int(pc.dstSize.y)) {
+        return;
+    }
+
+    vec2 norm = (vec2(gid) + vec2(0.5)) / vec2(pc.dstSize);
+    vec2 uv = pc.uvRect.xy + norm * pc.uvRect.zw;
+
+    vec4 sampled = texture(uSourceTex, uv);
+    vec3 rgb = clamp(sampled.rgb, 0.0, 1.0);
+
+    if (pc.colorMode == 1u) {
+        // Full RGB (0-255 full-range precision without 16-235 studio swing compression)
+        vec3 lin = srgbToLinear(rgb);
+        // Subtle linear-light full-range contrast expansion preserving pure black & white
+        vec3 fullRgbLin = clamp((lin - vec3(0.0015)) * 1.018 + vec3(0.0015), 0.0, 1.0);
+        rgb = linearToSrgb(fullRgbLin);
+    } else if (pc.colorMode == 2u) {
+        // Deep Color (10-bit): linear-light wide-gamut headroom + 1024-step micro-dither
+        vec3 lin = srgbToLinear(rgb);
+        // Smooth wide-gamut matrix (sRGB linear -> enriched Display P3 / Rec.2020 headroom)
+        mat3 gamutExpand = mat3(
+            1.0640, -0.0320, -0.0120,
+           -0.0410,  1.0580, -0.0140,
+           -0.0230, -0.0260,  1.0260
+        );
+        vec3 wideLin = max(gamutExpand * lin, vec3(0.0));
+        // Soft highlight shoulder to avoid clipping bright saturated colors
+        wideLin = wideLin / (vec3(1.0) + max(wideLin - vec3(0.92), vec3(0.0)) * 0.35);
+        vec3 encoded = linearToSrgb(wideLin);
+
+        // Apply 10-bit (1/1023) Interleaved Gradient Noise micro-dither on midtones
+        float dither = interleavedGradientNoise(vec2(gid), pc.frameIndex) / 1023.0;
+        vec3 midMask = smoothstep(vec3(0.0), vec3(0.02), encoded) *
+                       (vec3(1.0) - smoothstep(vec3(0.98), vec3(1.0), encoded));
+        rgb = clamp(encoded + dither * midMask, 0.0, 1.0);
+    }
+
+    // Mode 0 (Original Color) outputs 1:1 sampled sRGB untouched
+    imageStore(uOutputImage, gid, vec4(rgb, 1.0));
+}
